@@ -1,0 +1,8 @@
+{
+  "name": "san_core",
+  "version": "0.1.0",
+  "description": "Logique pure du viewer SAN (sans HAL), testable sur hote",
+  "frameworks": "*",
+  "platforms": "*",
+  "dependencies": [ { "name": "ArduinoJson", "version": "^7.2.0" } ]
+}

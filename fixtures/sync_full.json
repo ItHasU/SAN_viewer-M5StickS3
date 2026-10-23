@@ -1,0 +1,24 @@
+{
+  "server_time": "2026-10-23T15:05:00Z",
+  "capabilities_required": false,
+  "config_hash": "3f9a1c0000000000",
+  "config": null,
+  "states": [
+    { "agent": "build-1", "name": "Build", "status": "working",
+      "detail": "Compilation firmware", "progress": 40, "stale": false,
+      "updated_at": "2026-10-23T15:03:10Z" },
+    { "agent": "veille", "name": "Veille", "status": "idle",
+      "detail": null, "progress": null, "stale": true,
+      "updated_at": "2026-10-23T10:00:00Z" }
+  ],
+  "events": [
+    { "id": 808, "agent": "build-1", "kind": "nudge", "priority": "high",
+      "text": "Échec des tests", "created_at": "2026-10-23T15:04:40Z" },
+    { "id": 809, "agent": "veille", "kind": "voice", "text": "Trois nouveaux articles.",
+      "clip": { "id": "c_01J0000000000000000000000A", "format": "ima_adpcm", "sample_rate": 8000,
+                "size": 17600, "duration_ms": 4400 },
+      "created_at": "2026-10-23T15:04:55Z" }
+  ],
+  "has_more": false,
+  "next_sync_s": 60
+}

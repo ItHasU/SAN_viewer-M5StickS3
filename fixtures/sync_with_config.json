@@ -1,0 +1,17 @@
+{
+  "server_time": "2026-10-23T15:05:00Z",
+  "capabilities_required": true,
+  "config_hash": "aaaabbbbccccdddd",
+  "config": {
+    "mode": "manual",
+    "agents": [
+      { "agent": "build-1", "name": "Build", "subscribed": true, "new": false, "position": 0, "muted": false, "can_send_voice": true },
+      { "agent": "veille", "name": "Veille", "subscribed": true, "new": false, "position": 1, "muted": true, "can_send_voice": false },
+      { "agent": "nouveau", "name": "Nouveau", "subscribed": false, "new": true, "position": null, "muted": false, "can_send_voice": false }
+    ]
+  },
+  "states": [],
+  "events": [],
+  "has_more": true,
+  "next_sync_s": 15
+}

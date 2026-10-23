@@ -1,0 +1,5 @@
+{ "error": "conflict", "message": "La configuration a change",
+  "config_hash": "9999888877776666",
+  "config": { "mode": "manual", "agents": [
+    { "agent": "build-1", "name": "Build", "subscribed": false, "new": false, "position": 0, "muted": false, "can_send_voice": true },
+    { "agent": "nouveau", "name": "Nouveau", "subscribed": false, "new": true, "position": null, "muted": false, "can_send_voice": false } ] } }

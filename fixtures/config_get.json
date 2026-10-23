@@ -1,0 +1,3 @@
+{ "config_hash": "1111222233334444",
+  "config": { "mode": "manual", "agents": [
+    { "agent": "build-1", "name": "Build", "subscribed": true, "new": false, "position": 0, "muted": false, "can_send_voice": true } ] } }
