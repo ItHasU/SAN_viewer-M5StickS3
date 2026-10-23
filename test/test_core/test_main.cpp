@@ -1,6 +1,11 @@
 #include <unity.h>
 
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
+#include <cstdlib>
+#include <iterator>
+#include <vector>
 #include <cstring>
 #include <fstream>
 #include <sstream>
@@ -384,6 +389,130 @@ void test_ima_roundtrip() {
   TEST_ASSERT_EQUAL(10, imaDecode(w, wav.data(), small.data(), small.size()));
 }
 
+// ---------- fichiers produits par la commande ffmpeg exacte du serveur (tools/gen-fixtures.sh) ----------
+static std::vector<uint8_t> fxBin(const char *name) {
+  std::ifstream f(std::string("fixtures/audio/") + name, std::ios::binary);
+  if (!f) { TEST_FAIL_MESSAGE((std::string("fixture audio introuvable (tools/gen-fixtures.sh): ") + name).c_str()); }
+  return std::vector<uint8_t>((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+}
+
+// Decode comme playWav() : renvoie les echantillons mono et la frequence.
+static std::vector<int16_t> decodeLikePlayer(const std::vector<uint8_t> &wav, uint32_t &rate, uint16_t &fmt) {
+  WavInfo w = parseWav(wav.data(), wav.size());
+  TEST_ASSERT_TRUE(w.valid);
+  TEST_ASSERT_EQUAL(1, w.channels);
+  rate = w.sampleRate;
+  fmt = w.format;
+  std::vector<int16_t> out;
+  if (w.format == 1) {
+    TEST_ASSERT_EQUAL(16, w.bits);
+    out.resize(w.dataLen / 2);
+    memcpy(out.data(), wav.data() + w.dataOffset, out.size() * 2);
+  } else {
+    TEST_ASSERT_EQUAL(0x11, w.format);
+    out.resize(imaSampleCount(w));
+    TEST_ASSERT_EQUAL(out.size(), imaDecode(w, wav.data(), out.data(), out.size()));
+  }
+  return out;
+}
+
+// Sinusoide ffmpeg `sine=frequency=440` : amplitude 1/8 de la pleine echelle (4096), 1,0 s.
+static void checkSine(const std::vector<int16_t> &pcm, uint32_t rate, double tolRms) {
+  TEST_ASSERT_EQUAL_UINT32(rate, pcm.size());  // duree exacte : 1,0 s (le remplissage du dernier bloc ADPCM est ignore)
+  double sum = 0; int peak = 0, crossings = 0;
+  for (size_t i = 0; i < pcm.size(); i++) {
+    sum += (double)pcm[i] * pcm[i];
+    if (abs(pcm[i]) > peak) peak = abs(pcm[i]);
+    if (i && pcm[i - 1] < 0 && pcm[i] >= 0) crossings++;
+  }
+  double rms = sqrt(sum / pcm.size());
+  char m[96];
+  snprintf(m, sizeof m, "rms=%.0f (attendu ~2896)", rms);
+  TEST_ASSERT_TRUE_MESSAGE(fabs(rms - 2896.0) < 2896.0 * tolRms, m);
+  snprintf(m, sizeof m, "peak=%d (attendu ~4096)", peak);
+  TEST_ASSERT_TRUE_MESSAGE(abs(peak - 4096) < 4096 * tolRms * 1.5, m);
+  snprintf(m, sizeof m, "passages par zero=%d (attendu 440)", crossings);
+  TEST_ASSERT_TRUE_MESSAGE(abs(crossings - 440) <= 2, m);
+}
+
+void test_server_pcm_fixtures() {
+  for (uint32_t rate : {8000u, 16000u}) {
+    auto wav = fxBin(rate == 8000 ? "pcm_s16le-8000.wav" : "pcm_s16le-16000.wav");
+    uint32_t r; uint16_t f;
+    auto pcm = decodeLikePlayer(wav, r, f);
+    TEST_ASSERT_EQUAL_UINT32(rate, r);
+    TEST_ASSERT_EQUAL(1, f);
+    checkSine(pcm, rate, 0.01);
+  }
+}
+
+void test_server_ima_adpcm_fixtures() {
+  for (uint32_t rate : {8000u, 16000u}) {
+    auto wav = fxBin(rate == 8000 ? "ima_adpcm-8000.wav" : "ima_adpcm-16000.wav");
+    auto ref = fxBin(rate == 8000 ? "pcm_s16le-8000.wav" : "pcm_s16le-16000.wav");
+    WavInfo w = parseWav(wav.data(), wav.size());
+    TEST_ASSERT_TRUE(w.valid);
+    TEST_ASSERT_EQUAL(0x11, w.format);
+    TEST_ASSERT_EQUAL_UINT32(rate, w.sampleRate);
+    TEST_ASSERT_EQUAL(1024, w.blockAlign);        // ffmpeg : blocs de 1024 octets
+    TEST_ASSERT_EQUAL(2041, w.samplesPerBlock);   // (1024-4)*2+1
+    TEST_ASSERT_EQUAL_UINT32(rate, w.factSamples);  // chunk 'fact' = 1,0 s exactes
+    TEST_ASSERT_TRUE(imaSampleCount(w) == rate);   // sans 'fact', le dernier bloc ajouterait du silence
+    uint32_t r; uint16_t f;
+    auto pcm = decodeLikePlayer(wav, r, f);
+    TEST_ASSERT_EQUAL_UINT32(rate, r);
+    checkSine(pcm, rate, 0.05);
+    // proche de la version PCM du meme signal (quantification 4 bits)
+    uint32_t r2; uint16_t f2;
+    auto exact = decodeLikePlayer(ref, r2, f2);
+    long maxErr = 0;
+    for (size_t i = 64; i < pcm.size(); i++) maxErr = std::max(maxErr, labs((long)pcm[i] - exact[i]));
+    char m[64]; snprintf(m, sizeof m, "ecart max ADPCM/PCM = %ld", maxErr);
+    TEST_ASSERT_TRUE_MESSAGE(maxErr < 400, m);
+  }
+}
+
+void test_server_ima_without_fact_pads_last_block() {
+  // Meme fichier sans chunk 'fact' : le decodeur voit le remplissage du dernier bloc (comportement documente).
+  auto wav = fxBin("ima_adpcm-16000.wav");
+  WavInfo w = parseWav(wav.data(), wav.size());
+  w.factSamples = 0;
+  size_t n = imaSampleCount(w);
+  TEST_ASSERT_TRUE(n > 16000 && n < 16000 + 2041);
+}
+
+// Reponse reelle du serveur SAN (capturee sur le vrai serveur, sync avec nudge + clip TTS ima_adpcm)
+void test_parse_real_server_sync() {
+  SyncResponse r;
+  TEST_ASSERT_TRUE(parseSync(fx("server_sync.json"), r));
+  TEST_ASSERT_TRUE(r.capabilitiesRequired);
+  TEST_ASSERT_TRUE(r.hasConfig);
+  TEST_ASSERT_EQUAL_STRING("60a6ebb52e6e7aa6", r.configHash.c_str());
+  TEST_ASSERT_EQUAL(1, r.config.agents.size());
+  TEST_ASSERT_TRUE(r.config.agents[0].subscribed);
+  TEST_ASSERT_EQUAL(0, r.config.agents[0].position);
+  TEST_ASSERT_EQUAL(1, r.states.size());
+  TEST_ASSERT_EQUAL_STRING("working", r.states[0].status.c_str());
+  TEST_ASSERT_EQUAL(40, r.states[0].progress);
+  TEST_ASSERT_EQUAL_STRING("Compilation", r.states[0].detail.c_str());
+  TEST_ASSERT_EQUAL(2, r.events.size());
+  TEST_ASSERT_TRUE(r.events[0].isHigh());
+  TEST_ASSERT_FALSE(r.events[0].hasClip);
+  TEST_ASSERT_TRUE(r.events[1].hasClip);
+  TEST_ASSERT_EQUAL_STRING("ima_adpcm", r.events[1].clip.format.c_str());
+  TEST_ASSERT_EQUAL(16000, r.events[1].clip.sampleRate);
+  TEST_ASSERT_EQUAL(4190, r.events[1].clip.size);
+  TEST_ASSERT_EQUAL(500, r.events[1].clip.durationMs);
+  TEST_ASSERT_EQUAL(60, r.nextSyncS);
+}
+
+// Document de capacites exact (octet pour octet) : tools/device-sim.py du serveur envoie la meme chaine.
+void test_caps_json_exact() {
+  const char *expected = R"JSON({"protocol_version":1,"firmware":"san-m5sticks3 0.1.0","display":{"width":135,"height":240,"color":true,"max_detail_chars":80},"audio_out":{"formats":["ima_adpcm","pcm_s16le"],"sample_rates":[8000,16000]},"audio_in":{"formats":["pcm_s16le"],"sample_rate":16000,"max_duration_s":10},"nudge":["sound","screen"],"input":["buttons"],"battery":true})JSON";
+  TEST_ASSERT_EQUAL_STRING(expected, buildCapabilitiesJson("san-m5sticks3 0.1.0").c_str());
+  TEST_ASSERT_EQUAL_STRING("065921302cd8ee02", capsHash(expected).c_str());  // hash renvoye par le vrai serveur
+}
+
 int main(int, char **) {
   UNITY_BEGIN();
   RUN_TEST(test_sha256_vectors);
@@ -412,5 +541,10 @@ int main(int, char **) {
   RUN_TEST(test_wav_streaming_size_and_list_chunk);
   RUN_TEST(test_wav_invalid);
   RUN_TEST(test_ima_roundtrip);
+  RUN_TEST(test_parse_real_server_sync);
+  RUN_TEST(test_caps_json_exact);
+  RUN_TEST(test_server_pcm_fixtures);
+  RUN_TEST(test_server_ima_adpcm_fixtures);
+  RUN_TEST(test_server_ima_without_fact_pads_last_block);
   return UNITY_END();
 }

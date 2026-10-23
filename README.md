@@ -52,7 +52,7 @@ ou un passage notable (`waiting`, `error`, `done`) d'un agent suivi. Extinction 
   SHA-256, WAV/ADPCM). Testée en natif.
 - `src/` : HAL (`hw_state` NVS/RTC, `net` Wi-Fi + `esp_http_client` TLS avec bundle de CA, `audio_io`, `ui`,
   `portal`) et orchestration (`main.cpp`).
-- `fixtures/` : réponses JSON conformes à SPEC §10.4 utilisées par les tests.
+- `fixtures/` : réponses JSON conformes à SPEC §10.4 (dont `server_sync.json`, capturée sur le vrai serveur) et `fixtures/audio/*.wav`, produits par la commande ffmpeg exacte du serveur (`tools/gen-fixtures.sh`, ffmpeg requis pour les régénérer) ; utilisés par les tests natifs.
 
 ## Hypothèses sur l'API (à vérifier côté serveur)
 

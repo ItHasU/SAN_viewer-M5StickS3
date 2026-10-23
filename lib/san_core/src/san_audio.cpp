@@ -51,6 +51,8 @@ WavInfo parseWav(const uint8_t *d, size_t len) {
       if (w.format == 0x11 && w.samplesPerBlock == 0 && w.blockAlign > 4)
         w.samplesPerBlock = (w.blockAlign - 4) * 2 + 1;
       haveFmt = true;
+    } else if (!memcmp(d + p, "fact", 4) && sz >= 4 && p + 8 + 4 <= len) {
+      w.factSamples = rd32(c);
     } else if (!memcmp(d + p, "data", 4)) {
       if (!haveFmt) return w;
       w.dataOffset = p + 8;
@@ -71,6 +73,7 @@ size_t imaSampleCount(const WavInfo &w) {
   size_t full = w.dataLen / w.blockAlign, rem = w.dataLen % w.blockAlign;
   size_t n = full * w.samplesPerBlock;
   if (rem > 4) n += 1 + (rem - 4) * 2;
+  if (w.factSamples > 0 && w.factSamples < n) n = w.factSamples;  // ignore le remplissage du dernier bloc
   return n;
 }
 
@@ -78,7 +81,9 @@ size_t imaDecode(const WavInfo &w, const uint8_t *data, int16_t *out, size_t cap
   if (w.format != 0x11 || w.channels != 1 || w.blockAlign <= 4) return 0;
   size_t n = 0;
   size_t off = 0;
-  while (off + 4 < w.dataLen) {
+  const size_t total = imaSampleCount(w);
+  if (cap > total) cap = total;
+  while (off + 4 < w.dataLen && n < cap) {
     size_t bl = w.dataLen - off < w.blockAlign ? w.dataLen - off : w.blockAlign;
     if (bl <= 4) break;
     const uint8_t *b = data + w.dataOffset + off;

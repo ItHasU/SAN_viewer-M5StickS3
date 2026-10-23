@@ -16,10 +16,11 @@ struct WavInfo {
   uint16_t samplesPerBlock = 0;
   size_t dataOffset = 0;
   size_t dataLen = 0;  // borne par la taille reellement disponible
+  uint32_t factSamples = 0;  // chunk 'fact' (ffmpeg l'ecrit pour l'ADPCM) : vrai nombre d'echantillons, 0 si absent
 };
 
 WavInfo parseWav(const uint8_t *data, size_t len);
-// Nombre d'echantillons mono produits pour dataLen octets d'ADPCM.
+// Nombre d'echantillons mono produits pour dataLen octets d'ADPCM (borne par 'fact' : le dernier bloc est complete par l'encodeur).
 size_t imaSampleCount(const WavInfo &w);
 // Decode de l'IMA ADPCM mono vers PCM s16. Renvoie le nombre d'echantillons ecrits.
 size_t imaDecode(const WavInfo &w, const uint8_t *data, int16_t *out, size_t outCap);
