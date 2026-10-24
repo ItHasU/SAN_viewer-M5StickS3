@@ -1,4 +1,4 @@
-// Ecrans (portrait 135x240). Toute la decision d'affichage est dans san_core ; ici, le dessin seulement.
+// Ecrans (paysage 240x135). Toute la decision d'affichage est dans san_core ; ici, le dessin seulement.
 #pragma once
 #include <Arduino.h>
 
