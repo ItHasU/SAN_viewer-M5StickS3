@@ -6,6 +6,10 @@
 #include "san_types.h"
 
 namespace audio_io {
+// Volume 0-255 applique immediatement (0 : aucun son). Memorise pour les lectures suivantes.
+void setVolume(int v);
+// Bip court d'apercu (reglage du volume), non bloquant.
+void beep();
 // Interrompt la lecture si abortOnButton et qu'un bouton est presse. Renvoie false si format non supporte.
 bool playWav(const uint8_t *data, size_t len, bool abortOnButton = true);
 // Son de nudge non bloquant : soundStart() lance, soundTick() doit etre appele regulierement,
@@ -16,6 +20,8 @@ bool soundBusy();
 void soundWait();
 void soundStop();
 void speakerOff();
+// Libere le haut-parleur quand plus rien ne joue (appeler regulierement, ex. depuis la boucle principale).
+void housekeeping();
 
 // Enregistre tant que isHeld() est vrai (max maxSamples). Renvoie un buffer PSRAM : en-tete WAV (44) + PCM.
 // Libere avec heap_caps_free. outLen = taille totale. nullptr si trop court / erreur.

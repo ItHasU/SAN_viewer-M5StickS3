@@ -9,6 +9,26 @@
 
 namespace audio_io {
 
+static int sVolume = 230;
+static bool sSpkOn = false;
+
+static bool speakerBegin() {
+  M5.Mic.end();
+  if (!sSpkOn) sSpkOn = M5.Speaker.begin();
+  if (sSpkOn) M5.Speaker.setVolume(sVolume);
+  return sSpkOn;
+}
+
+void setVolume(int v) {
+  sVolume = v < 0 ? 0 : v > 255 ? 255 : v;
+  if (sSpkOn) M5.Speaker.setVolume(sVolume);
+}
+
+void beep() {
+  if (sVolume <= 0 || !speakerBegin()) return;
+  M5.Speaker.tone(1000, 90);
+}
+
 static void waitPlayback(bool abortOnButton) {
   while (M5.Speaker.isPlaying()) {
     M5.update();
@@ -38,9 +58,10 @@ bool playWav(const uint8_t *data, size_t len, bool abortOnButton) {
   } else {
     return false;
   }
-  M5.Mic.end();
-  M5.Speaker.begin();
-  M5.Speaker.setVolume(230);  // ~90 % : bien au-dessus de la reco M5Stack (< 75 %), a surveiller (reboot sur batterie ?)
+  if (sVolume <= 0 || !speakerBegin()) {  // muet : rien a jouer
+    if (dec) heap_caps_free(dec);
+    return true;
+  }
   // playRaw copie par references : le buffer doit rester valide jusqu'a la fin de lecture.
   M5.Speaker.playRaw(pcm, n, w.sampleRate, false, 1, 0);
   waitPlayback(abortOnButton);
@@ -57,9 +78,7 @@ static uint32_t sNextAt = 0;
 static bool sActive = false;
 
 void soundStart(san::NudgeType type, bool high) {
-  M5.Mic.end();
-  M5.Speaker.begin();
-  M5.Speaker.setVolume(230);  // meme niveau que les clips (voir playWav)
+  if (sVolume <= 0 || !speakerBegin()) return;
   san::SoundPattern p = san::nudgeSound(type);
   sNotes = p.notes; sCount = p.count; sIdx = 0;
   sRepeatsLeft = san::nudgeRepeats(high);
@@ -94,14 +113,22 @@ void soundStop() {
   M5.Speaker.stop();
 }
 
-void speakerOff() { M5.Speaker.end(); }
+void speakerOff() {
+  M5.Speaker.end();
+  sSpkOn = false;
+}
+
+void housekeeping() {
+  soundTick();
+  if (sSpkOn && !sActive && !M5.Speaker.isPlaying()) speakerOff();
+}
 
 uint8_t *recordWav(bool (*isHeld)(), int rate, int maxSeconds, size_t *outLen, void (*onTick)(int)) {
   size_t maxSamples = (size_t)rate * maxSeconds;
   uint8_t *buf = (uint8_t *)heap_caps_malloc(44 + maxSamples * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   if (!buf) return nullptr;
   int16_t *pcm = (int16_t *)(buf + 44);
-  M5.Speaker.end();
+  speakerOff();
   if (!M5.Mic.begin()) { heap_caps_free(buf); return nullptr; }
   const size_t chunk = rate / 20;  // 50 ms
   size_t pos = 0;

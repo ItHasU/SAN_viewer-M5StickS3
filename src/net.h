@@ -9,6 +9,8 @@
 
 namespace net {
 
+// Lance l'association sans attendre (ex. pendant un enregistrement) ; wifiConnect la reprend sans la relancer.
+void wifiBegin(const Settings &s);
 bool wifiConnect(const Settings &s, uint32_t timeoutMs);
 void wifiOff();
 std::string currentSsid();
@@ -24,6 +26,8 @@ struct Buf {
   Buf(const Buf &) = delete;
   Buf &operator=(const Buf &) = delete;
   bool append(const uint8_t *d, size_t n);
+  // Cede la propriete du tampon (a liberer avec heap_caps_free) ; le Buf redevient vide.
+  uint8_t *release(size_t *outLen) { uint8_t *r = p; *outLen = len; p = nullptr; len = cap = 0; return r; }
   std::string str() const { return std::string((const char *)p, len); }
 };
 
