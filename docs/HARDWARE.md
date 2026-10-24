@@ -60,3 +60,26 @@ Document déclaré (`buildCapabilitiesJson`, `lib/san_core`) :
 - Réveil par bouton : `ext1` sur G11/G12 (RTC IO, niveau bas). À valider sur carte (les deux GPIO sont des
   RTC IO sur S3, résistances de tirage externes supposées).
 - Gain du micro : `M5.Mic` par défaut ; un gain logiciel peut être nécessaire.
+
+## Résultats de la checklist sur carte réelle (24/10/2026)
+
+Carte M5StickS3 réelle, firmware flashé via `pio run -e m5sticks3 -t upload` (mode téléchargement requis : le port
+USB disparaît pendant le deep sleep), serveur SAN en Docker (compose standalone) joint par l'IP LAN en HTTP simple
+(champ « URL LAN » du portail).
+
+| # | Point | Résultat |
+|---|---|---|
+| 1 | Portail Wi-Fi au premier boot (AP `SAN-Viewer-XXXX`, 192.168.4.1), saisie SSID et URL LAN | OK |
+| 2 | Register, code d'appairage, activation dans l'admin, passage en RUN | OK (carte `active`, sync toutes les 60 s) |
+| 3 | `capabilities_required`, PUT caps, hash identique côté serveur | OK (hash enregistré côté serveur, identique à celui du simulateur) |
+| 4 | Règle `*` + `can_send_voice`, état/nudge/say depuis `bin/san` : écran, son, clip ADPCM 16 kHz | OK : texte lisible, voix intelligible ; volume jugé trop bas à 160, relevé à 230 ; **nudge `question` déclenché par un vrai hook Claude Code : son et icône OK** |
+| 5 | Enregistrement (A maintenu) vers l'agent | Non testé |
+| 6 | Menu abonnements (B maintenu), 409 | Non testé |
+| 7 | Deep sleep : réveil timer et bouton, consommation | Réveil timer OK (cycle 60 s) ; réveil bouton, consommation : non testés |
+| 8 | Révocation dans l'admin, 401, effacement du jeton | Non testé |
+| 9 | Batterie remontée dans l'admin | OK (81 %, puis 99 % après charge) |
+
+Retours d'usage intégrés : écran en paysage (rotation 1, bouton A sur le dessus), police x2, pictogrammes plutôt
+que texte, sons distincts par type de nudge (`start`, `notification`, `question`, `done`, `error`), animation de
+calcul sans pourcentage. À valider à l'usage : les 4 autres types de nudge (rendu et sons), le volume 230 sur
+batterie (risque de redémarrage), la fluidité de l'animation.
