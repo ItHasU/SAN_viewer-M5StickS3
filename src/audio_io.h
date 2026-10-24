@@ -3,10 +3,18 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "san_types.h"
+
 namespace audio_io {
 // Interrompt la lecture si abortOnButton et qu'un bouton est presse. Renvoie false si format non supporte.
 bool playWav(const uint8_t *data, size_t len, bool abortOnButton = true);
-void nudgeTone(bool high);
+// Son de nudge non bloquant : soundStart() lance, soundTick() doit etre appele regulierement,
+// soundWait() bloque jusqu'a la fin (avant le deep sleep).
+void soundStart(san::NudgeType type, bool high);
+void soundTick();
+bool soundBusy();
+void soundWait();
+void soundStop();
 void speakerOff();
 
 // Enregistre tant que isHeld() est vrai (max maxSamples). Renvoie un buffer PSRAM : en-tete WAV (44) + PCM.

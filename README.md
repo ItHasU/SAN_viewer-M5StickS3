@@ -19,6 +19,13 @@ pio run -t upload           # flash (USB-C ; maintenir le bouton latéral pour l
 pio device monitor
 ```
 
+## Affichage et nudges
+
+Écran en paysage (`setRotation(1)`) : bouton A de face en haut, USB-C en bas. Les nudges portent un champ
+optionnel `type` (`start|notification|question|done|error`, absent ou inconnu = `notification`) : chaque type a
+son icône/couleur et son motif sonore (`lib/san_core/src/san_sound.*`, durée < 3 s) ; `priority: high` = fond vif et
+son répété 2 fois. Un agent `working` sans pourcentage affiche un engrenage et trois points animés (tant que l'écran est allumé).
+
 ## Configuration initiale
 
 1. Au premier démarrage (ou bouton **B maintenu 3 s pendant le boot**), la carte ouvre un point d'accès

@@ -22,7 +22,7 @@ connaissent `board_M5StickS3`). **Aucune vérification sur carte physique n'a pu
 | LED | **Aucune LED utilisateur documentée** (seulement une LED interne verte en mode téléchargement, sans GPIO) | idem |
 | Conso (4,2 V) | arrêt 14 µA ; L1 52 µA ; L2 102 µA ; actif 37 mA ; charge max 519 mA | idem |
 
-Recommandation M5Stack : volume HP < 75 % sur batterie (reboots sinon) -> le firmware utilise 160/255.
+Recommandation M5Stack : volume HP < 75 % sur batterie (reboots sinon) -> le firmware utilise 230/255 (~90 %, volontairement plus fort ; a surveiller : reboot sur batterie ?).
 
 ## Configuration PlatformIO retenue
 

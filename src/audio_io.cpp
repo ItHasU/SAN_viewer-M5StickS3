@@ -5,6 +5,7 @@
 
 #include "config.h"
 #include "san_audio.h"
+#include "san_sound.h"
 
 namespace audio_io {
 
@@ -39,7 +40,7 @@ bool playWav(const uint8_t *data, size_t len, bool abortOnButton) {
   }
   M5.Mic.end();
   M5.Speaker.begin();
-  M5.Speaker.setVolume(200);  // ~78 % : plus fort que la reco M5Stack (< 75 %), a surveiller (reboot sur batterie ?)
+  M5.Speaker.setVolume(230);  // ~90 % : bien au-dessus de la reco M5Stack (< 75 %), a surveiller (reboot sur batterie ?)
   // playRaw copie par references : le buffer doit rester valide jusqu'a la fin de lecture.
   M5.Speaker.playRaw(pcm, n, w.sampleRate, false, 1, 0);
   waitPlayback(abortOnButton);
@@ -48,16 +49,49 @@ bool playWav(const uint8_t *data, size_t len, bool abortOnButton) {
   return true;
 }
 
-void nudgeTone(bool high) {
+// Sequenceur non bloquant : chaque note est lancee par soundTick() quand la precedente est finie.
+static const san::Note *sNotes = nullptr;
+static size_t sCount = 0, sIdx = 0;
+static int sRepeatsLeft = 0;
+static uint32_t sNextAt = 0;
+static bool sActive = false;
+
+void soundStart(san::NudgeType type, bool high) {
   M5.Mic.end();
   M5.Speaker.begin();
-  M5.Speaker.setVolume(200);
-  int reps = high ? 3 : 1;
-  for (int i = 0; i < reps; i++) {
-    M5.Speaker.tone(high ? 1800 : 1200, 120);
-    delay(180);
+  M5.Speaker.setVolume(230);  // meme niveau que les clips (voir playWav)
+  san::SoundPattern p = san::nudgeSound(type);
+  sNotes = p.notes; sCount = p.count; sIdx = 0;
+  sRepeatsLeft = san::nudgeRepeats(high);
+  sNextAt = millis();
+  sActive = true;
+  soundTick();
+}
+
+void soundTick() {
+  if (!sActive) return;
+  while (sActive && (int32_t)(millis() - sNextAt) >= 0) {
+    if (sIdx >= sCount) {
+      if (--sRepeatsLeft <= 0) { sActive = false; break; }
+      sIdx = 0;
+      sNextAt += 150;  // pause entre deux passages
+      continue;
+    }
+    const san::Note &n = sNotes[sIdx++];
+    if (n.freq) M5.Speaker.tone(n.freq, n.ms);
+    sNextAt += n.ms;
   }
-  while (M5.Speaker.isPlaying()) delay(5);
+}
+
+bool soundBusy() { return sActive || M5.Speaker.isPlaying(); }
+
+void soundWait() {
+  while (soundBusy()) { soundTick(); delay(5); }
+}
+
+void soundStop() {
+  sActive = false;
+  M5.Speaker.stop();
 }
 
 void speakerOff() { M5.Speaker.end(); }

@@ -95,6 +95,7 @@ static void waitOrButton(uint32_t ms) {
   uint32_t t0 = millis();
   while (millis() - t0 < ms) {
     M5.update();
+    audio_io::soundTick();
     if (M5.BtnA.wasPressed() || M5.BtnB.wasPressed()) break;
     delay(20);
   }
@@ -120,17 +121,19 @@ static size_t processEvents(const std::vector<EventItem> &events) {
     const AgentCfg *a = gCfg.find(e.agent);
     std::string name = a ? a->name : e.agent;
     screenOn();
-    ui::alert(name, e.kind, truncateChars(e.text, 80), e.isHigh());
+    ui::alert(name, e.kind, e.type, truncateChars(e.text, 80), e.isHigh());
     if (e.kind == "voice" && e.hasClip) {
       if (!downloadAndPlay(e.clip, e.agent)) break;  // non acquitte : rejoue au prochain cycle
       waitOrButton(1500);
     } else {
-      audio_io::nudgeTone(e.isHigh());
+      audio_io::soundStart(e.type, e.isHigh());  // non bloquant : waitOrButton entretient le sequenceur
       waitOrButton(cfg::kAlertShowMs);
+      audio_io::soundStop();  // bouton presse : coupe le son restant
     }
     done++;
     if (gPhase != Phase::Run) break;
   }
+  audio_io::soundWait();
   audio_io::speakerOff();
   return done;
 }
@@ -353,12 +356,14 @@ static void interactive() {
     if (M5.BtnB.wasHold()) { touch(); configMenu(); sel = 0; redraw = true; touch(); }
     if (gPhase == Phase::Register || gPhase == Phase::Pairing) return;
     if (redraw) drawStatus(sel);
+    else ui::animTick();  // limite a la fenetre d'eveil (la boucle sort a screenTimeout)
     delay(15);
   }
 }
 
 // ---------------- sommeil ----------------
 static void sleepNow(int seconds) {
+  audio_io::soundWait();  // laisse finir un son en cours avant de dormir
   audio_io::speakerOff();
   M5.Mic.end();
   if (gScreenOn) ui::backlightOff();
