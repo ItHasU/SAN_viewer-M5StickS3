@@ -61,6 +61,12 @@ Document déclaré (`buildCapabilitiesJson`, `lib/san_core`) :
   RTC IO sur S3, résistances de tirage externes supposées).
 - Gain du micro : `M5.Mic` par défaut ; un gain logiciel peut être nécessaire.
 
+- Réveil ext1 : `rtc_gpio_init` + entrée seule + pull-up sont désormais explicites avant le deep sleep (à valider).
+- État de charge : `M5.Power.isCharging()` (PMIC M5PM1) non vérifié sur carte ; `charge_unknown` n'affiche pas d'éclair.
+- Appui long / double clic : seuil 500 ms (`kHoldMs`) ; le clic simple du bouton frontal est décidé après le délai de
+  double clic de M5Unified (latence perceptible, à valider).
+- Au premier réveil par bouton, l'appui qui réveille la carte est perdu (boot) : c'est normal.
+
 ## Résultats de la checklist sur carte réelle (24/10/2026)
 
 Carte M5StickS3 réelle, firmware flashé via `pio run -e m5sticks3 -t upload` (mode téléchargement requis : le port
@@ -73,13 +79,15 @@ USB disparaît pendant le deep sleep), serveur SAN en Docker (compose standalone
 | 2 | Register, code d'appairage, activation dans l'admin, passage en RUN | OK (carte `active`, sync toutes les 60 s) |
 | 3 | `capabilities_required`, PUT caps, hash identique côté serveur | OK (hash enregistré côté serveur, identique à celui du simulateur) |
 | 4 | Règle `*` + `can_send_voice`, état/nudge/say depuis `bin/san` : écran, son, clip ADPCM 16 kHz | OK : texte lisible, voix intelligible ; volume jugé trop bas à 160, relevé à 230 ; **nudge `question` déclenché par un vrai hook Claude Code : son et icône OK** |
-| 5 | Enregistrement (A maintenu) vers l'agent | Non testé |
-| 6 | Menu abonnements (B maintenu), 409 | Non testé |
+| 5 | Enregistrement (appui long frontal) vers l'agent | Non testé |
+| 6 | Menu abonnements (double clic frontal puis Agents), 409 | Non testé |
 | 7 | Deep sleep : réveil timer et bouton, consommation | Réveil timer OK (cycle 60 s) ; réveil bouton, consommation : non testés |
 | 8 | Révocation dans l'admin, 401, effacement du jeton | Non testé |
 | 9 | Batterie remontée dans l'admin | OK (81 %, puis 99 % après charge) |
 
-Retours d'usage intégrés : écran en paysage (rotation 1, bouton A sur le dessus), police x2, pictogrammes plutôt
+Évolution suivante (voir README, « Boutons ») : vue principale à icônes (notifications en haut, activité et statut en bas), file de notifications, menu de réglages (volume, lumière, pause, agents), batterie avec éclair de charge.
+
+Retours d'usage intégrés : écran en paysage (rotation 1, bouton latéral B sur le dessus, bouton frontal A sur la face avant ; affectation modifiable dans `src/config.h`), police x2, pictogrammes plutôt
 que texte, sons distincts par type de nudge (`start`, `notification`, `question`, `done`, `error`), animation de
 calcul sans pourcentage. À valider à l'usage : les 4 autres types de nudge (rendu et sons), le volume 230 sur
 batterie (risque de redémarrage), la fluidité de l'animation.
