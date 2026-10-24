@@ -39,7 +39,7 @@ bool playWav(const uint8_t *data, size_t len, bool abortOnButton) {
   }
   M5.Mic.end();
   M5.Speaker.begin();
-  M5.Speaker.setVolume(160);  // < 75 % (recommandation M5Stack, evite les reboots sur batterie)
+  M5.Speaker.setVolume(200);  // ~78 % : plus fort que la reco M5Stack (< 75 %), a surveiller (reboot sur batterie ?)
   // playRaw copie par references : le buffer doit rester valide jusqu'a la fin de lecture.
   M5.Speaker.playRaw(pcm, n, w.sampleRate, false, 1, 0);
   waitPlayback(abortOnButton);
@@ -51,7 +51,7 @@ bool playWav(const uint8_t *data, size_t len, bool abortOnButton) {
 void nudgeTone(bool high) {
   M5.Mic.end();
   M5.Speaker.begin();
-  M5.Speaker.setVolume(160);
+  M5.Speaker.setVolume(200);
   int reps = high ? 3 : 1;
   for (int i = 0; i < reps; i++) {
     M5.Speaker.tone(high ? 1800 : 1200, 120);
