@@ -12,7 +12,7 @@ bool runConfigPortal(Settings &s) {
   char ap[24];
   snprintf(ap, sizeof ap, "SAN-Viewer-%02X%02X", mac[4], mac[5]);
   ui::backlightOn();
-  ui::message("Configuration", std::string("Connectez-vous au Wi-Fi\n") + ap + "\npuis ouvrez\n192.168.4.1", TFT_YELLOW);
+  ui::message("Wi-Fi", std::string(ap) + "\n192.168.4.1", TFT_YELLOW);
 
   WiFiManager wm;
   WiFiManagerParameter pSrv("srv", "URL du serveur (https://...)", s.serverUrl.c_str(), 160);
