@@ -13,6 +13,7 @@
 #include "san_audio.h"
 #include "san_logic.h"
 #include "san_protocol.h"
+#include "san_sound.h"
 #include "sha256.h"
 
 using namespace san;
@@ -524,6 +525,96 @@ static void test_status_icon() {
   TEST_ASSERT_NOT_EQUAL(statusIcon("done", false).color, statusIcon("error", false).color);
 }
 
+// ---------- types de nudge / sons ----------
+static const NudgeType kAllTypes[] = {NudgeType::Start, NudgeType::Notification, NudgeType::Question,
+                                      NudgeType::Done, NudgeType::Error};
+
+void test_nudge_type_parse() {
+  TEST_ASSERT_TRUE(parseNudgeType("start") == NudgeType::Start);
+  TEST_ASSERT_TRUE(parseNudgeType("notification") == NudgeType::Notification);
+  TEST_ASSERT_TRUE(parseNudgeType("question") == NudgeType::Question);
+  TEST_ASSERT_TRUE(parseNudgeType("done") == NudgeType::Done);
+  TEST_ASSERT_TRUE(parseNudgeType("error") == NudgeType::Error);
+  TEST_ASSERT_TRUE(parseNudgeType("") == NudgeType::Notification);
+  TEST_ASSERT_TRUE(parseNudgeType("banana") == NudgeType::Notification);
+  TEST_ASSERT_TRUE(parseNudgeType("ERROR") == NudgeType::Notification);
+}
+
+void test_nudge_type_in_sync() {
+  const char *json =
+      "{\"server_time\":\"t\",\"events\":["
+      "{\"id\":1,\"agent\":\"a\",\"kind\":\"nudge\",\"priority\":\"normal\",\"text\":\"x\"},"
+      "{\"id\":2,\"agent\":\"a\",\"kind\":\"nudge\",\"priority\":\"high\",\"type\":\"question\",\"text\":\"x\"},"
+      "{\"id\":3,\"agent\":\"a\",\"kind\":\"nudge\",\"type\":\"zzz\"},"
+      "{\"id\":4,\"agent\":\"a\",\"kind\":\"nudge\",\"type\":7},"
+      "{\"id\":5,\"agent\":\"a\",\"kind\":\"nudge\",\"type\":\"error\"}]}";
+  SyncResponse sr;
+  TEST_ASSERT_TRUE(parseSync(json, sr));
+  TEST_ASSERT_EQUAL(5, (int)sr.events.size());
+  TEST_ASSERT_TRUE(sr.events[0].type == NudgeType::Notification);
+  TEST_ASSERT_TRUE(sr.events[1].type == NudgeType::Question);
+  TEST_ASSERT_TRUE(sr.events[1].isHigh());
+  TEST_ASSERT_TRUE(sr.events[2].type == NudgeType::Notification);
+  TEST_ASSERT_TRUE(sr.events[3].type == NudgeType::Notification);
+  TEST_ASSERT_TRUE(sr.events[4].type == NudgeType::Error);
+}
+
+void test_nudge_sounds_exist_and_bounded() {
+  for (NudgeType t : kAllTypes) {
+    SoundPattern p = nudgeSound(t);
+    TEST_ASSERT_NOT_NULL(p.notes);
+    TEST_ASSERT_TRUE(p.count > 0);
+    bool audible = false;
+    for (size_t i = 0; i < p.count; i++) {
+      TEST_ASSERT_TRUE(p.notes[i].ms > 0);
+      if (p.notes[i].freq) { audible = true; TEST_ASSERT_TRUE(p.notes[i].freq >= 80 && p.notes[i].freq <= 4000); }
+    }
+    TEST_ASSERT_TRUE(audible);
+    TEST_ASSERT_TRUE(nudgeSoundMs(t, false) > 0);
+    TEST_ASSERT_TRUE(nudgeSoundMs(t, false) < 3000);
+    TEST_ASSERT_TRUE(nudgeSoundMs(t, true) < 3000);
+    TEST_ASSERT_TRUE(nudgeSoundMs(t, true) > nudgeSoundMs(t, false));
+  }
+  TEST_ASSERT_EQUAL(1, nudgeRepeats(false));
+  TEST_ASSERT_EQUAL(2, nudgeRepeats(true));
+}
+
+static bool samePattern(SoundPattern a, SoundPattern b) {
+  if (a.count != b.count) return false;
+  for (size_t i = 0; i < a.count; i++)
+    if (a.notes[i].freq != b.notes[i].freq || a.notes[i].ms != b.notes[i].ms) return false;
+  return true;
+}
+
+void test_nudge_sounds_and_styles_distinct() {
+  for (size_t i = 0; i < 5; i++)
+    for (size_t j = i + 1; j < 5; j++) {
+      TEST_ASSERT_FALSE(samePattern(nudgeSound(kAllTypes[i]), nudgeSound(kAllTypes[j])));
+      NudgeStyle a = nudgeStyle(kAllTypes[i]), b = nudgeStyle(kAllTypes[j]);
+      TEST_ASSERT_TRUE(a.icon != b.icon);
+      TEST_ASSERT_TRUE(a.color != b.color);
+    }
+}
+
+void test_nudge_sound_shapes() {
+  // notification : 3 x (grave, aigu) alternes
+  SoundPattern n = nudgeSound(NudgeType::Notification);
+  int audible = 0;
+  for (size_t i = 0; i < n.count; i++) if (n.notes[i].freq) audible++;
+  TEST_ASSERT_EQUAL(6, audible);
+  // done : arpege montant do-mi-sol-do
+  SoundPattern d = nudgeSound(NudgeType::Done);
+  TEST_ASSERT_EQUAL(4, (int)d.count);
+  for (size_t i = 1; i < d.count; i++) TEST_ASSERT_TRUE(d.notes[i].freq > d.notes[i - 1].freq);
+  // question : se termine plus haut qu'il ne commence
+  SoundPattern q = nudgeSound(NudgeType::Question);
+  TEST_ASSERT_TRUE(q.notes[q.count - 1].freq > q.notes[0].freq);
+  // error : grave et descendant
+  SoundPattern e = nudgeSound(NudgeType::Error);
+  TEST_ASSERT_TRUE(e.notes[0].freq < 300);
+  TEST_ASSERT_TRUE(e.notes[2].freq < e.notes[0].freq);
+}
+
 int main(int, char **) {
   UNITY_BEGIN();
   RUN_TEST(test_sha256_vectors);
@@ -558,5 +649,10 @@ int main(int, char **) {
   RUN_TEST(test_server_ima_adpcm_fixtures);
   RUN_TEST(test_server_ima_without_fact_pads_last_block);
   RUN_TEST(test_status_icon);
+  RUN_TEST(test_nudge_type_parse);
+  RUN_TEST(test_nudge_type_in_sync);
+  RUN_TEST(test_nudge_sounds_exist_and_bounded);
+  RUN_TEST(test_nudge_sounds_and_styles_distinct);
+  RUN_TEST(test_nudge_sound_shapes);
   return UNITY_END();
 }

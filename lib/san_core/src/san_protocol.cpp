@@ -1,4 +1,5 @@
 #include "san_protocol.h"
+#include "san_sound.h"
 
 #include <ArduinoJson.h>
 
@@ -179,6 +180,7 @@ bool parseSync(const std::string &json, SyncResponse &out) {
     ev.kind = str(e["kind"]);
     ev.priority = str(e["priority"]);
     ev.text = str(e["text"]);
+    ev.type = parseNudgeType(str(e["type"]));
     ev.createdAt = str(e["created_at"]);
     if (e["clip"].is<JsonObjectConst>()) {
       JsonObjectConst c = e["clip"];

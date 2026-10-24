@@ -20,9 +20,13 @@ struct AgentState {
   bool stale = false;
 };
 
+// Type d'un nudge (champ optionnel "type" ; absent ou inconnu -> Notification).
+enum class NudgeType { Start, Notification, Question, Done, Error };
+
 struct EventItem {
   int64_t id = 0;
   std::string agent, kind, priority, text, createdAt;  // kind: "nudge" | "voice"
+  NudgeType type = NudgeType::Notification;
   bool hasClip = false;
   Clip clip;
   bool isHigh() const { return priority == "high"; }
