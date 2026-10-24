@@ -12,6 +12,8 @@
 
 #include "san_audio.h"
 #include "san_logic.h"
+#include "san_notify.h"
+#include "san_ui.h"
 #include "san_protocol.h"
 #include "san_sound.h"
 #include "sha256.h"
@@ -615,6 +617,205 @@ void test_nudge_sound_shapes() {
   TEST_ASSERT_TRUE(e.notes[2].freq < e.notes[0].freq);
 }
 
+
+// ---------- file de notifications ----------
+void test_notif_push_merge_order() {
+  NotifQueue q;
+  q.push("a", NudgeType::Question, false, false, 1);
+  q.push("b", NudgeType::Done, false, false, 2);
+  q.push("a", NudgeType::Question, false, true, 3);  // fusion : redevient la plus recente
+  TEST_ASSERT_EQUAL(2, (int)q.size());
+  TEST_ASSERT_EQUAL(3, q.total());
+  TEST_ASSERT_EQUAL_STRING("a", q.recent(0)->agent.c_str());
+  TEST_ASSERT_EQUAL(2, q.recent(0)->count);
+  TEST_ASSERT_TRUE(q.recent(0)->high);
+  TEST_ASSERT_EQUAL(3, (int)q.recent(0)->id);
+  TEST_ASSERT_EQUAL_STRING("b", q.recent(1)->agent.c_str());
+  TEST_ASSERT_NULL(q.recent(2));
+  // type ou voix differents : pas de fusion
+  q.push("a", NudgeType::Done, false, false, 4);
+  q.push("a", NudgeType::Done, true, false, 5);
+  TEST_ASSERT_EQUAL(4, (int)q.size());
+}
+
+void test_notif_ack_and_capacity() {
+  NotifQueue q;
+  for (int i = 0; i < 20; i++) q.push("ag" + std::to_string(i), NudgeType::Notification, false, false, i);
+  TEST_ASSERT_EQUAL(16, (int)q.size());
+  TEST_ASSERT_EQUAL_STRING("ag19", q.recent(0)->agent.c_str());
+  TEST_ASSERT_EQUAL_STRING("ag4", q.recent(15)->agent.c_str());  // les plus anciens sont perdus
+  auto l = q.latest(3);
+  TEST_ASSERT_EQUAL(3, (int)l.size());
+  TEST_ASSERT_EQUAL_STRING("ag18", l[1].agent.c_str());
+  TEST_ASSERT_TRUE(q.ackLatest());
+  TEST_ASSERT_EQUAL_STRING("ag18", q.recent(0)->agent.c_str());
+  TEST_ASSERT_TRUE(q.ackRecent(1));
+  TEST_ASSERT_EQUAL_STRING("ag16", q.recent(1)->agent.c_str());
+  TEST_ASSERT_FALSE(q.ackRecent(99));
+  TEST_ASSERT_EQUAL(1, (int)q.ackAgent("ag5"));
+  q.ackAll();
+  TEST_ASSERT_TRUE(q.empty());
+  TEST_ASSERT_FALSE(q.ackLatest());
+  TEST_ASSERT_EQUAL(0, q.total());
+}
+
+void test_notif_restore_roundtrip() {
+  NotifQueue q;
+  q.push("x", NudgeType::Error, false, true, 7);
+  q.push("y", NudgeType::Start, true, false, 8);
+  NotifQueue r;
+  r.restore(q.items());
+  TEST_ASSERT_EQUAL(2, (int)r.size());
+  TEST_ASSERT_EQUAL_STRING("y", r.recent(0)->agent.c_str());
+  TEST_ASSERT_TRUE(r.recent(1)->high);
+  std::vector<Notif> big(40);
+  r.restore(big);
+  TEST_ASSERT_EQUAL(16, (int)r.size());
+}
+
+void test_pick_alert() {
+  std::vector<EventItem> ev;
+  NudgeType t; bool h;
+  TEST_ASSERT_FALSE(pickAlert(ev, t, h));
+  EventItem a; a.kind = "nudge"; a.type = NudgeType::Done;
+  EventItem b; b.kind = "nudge"; b.type = NudgeType::Error;
+  EventItem c; c.kind = "voice";
+  EventItem d; d.kind = "nudge"; d.type = NudgeType::Question; d.priority = "high";
+  ev = {a, c};
+  TEST_ASSERT_TRUE(pickAlert(ev, t, h));
+  TEST_ASSERT_TRUE(t == NudgeType::Done); TEST_ASSERT_FALSE(h);
+  ev = {a, b};
+  pickAlert(ev, t, h);
+  TEST_ASSERT_TRUE(t == NudgeType::Error);
+  ev = {b, a, d};
+  pickAlert(ev, t, h);
+  TEST_ASSERT_TRUE(t == NudgeType::Question); TEST_ASSERT_TRUE(h);
+  ev = {c};
+  TEST_ASSERT_FALSE(pickAlert(ev, t, h));
+}
+
+// ---------- reglages ----------
+void test_settings_cycles() {
+  // le volume par defaut est atteignable et le cycle boucle
+  int v = 0, seen230 = 0;
+  for (int i = 0; i < 7; i++) { v = nextVolume(v); if (v == 230) seen230++; }
+  TEST_ASSERT_EQUAL(0, v);
+  TEST_ASSERT_EQUAL(1, seen230);
+  TEST_ASSERT_EQUAL(255, nextVolume(230));
+  TEST_ASSERT_EQUAL(0, nextVolume(255));
+  TEST_ASSERT_EQUAL(192, nextVolume(150));  // valeur hors serie : plus proche (160), puis suivante
+  TEST_ASSERT_EQUAL(210, nextBrightness(160));
+  TEST_ASSERT_EQUAL(20, nextBrightness(255));
+  TEST_ASSERT_EQUAL(30, nextPause(10));
+  TEST_ASSERT_EQUAL(0, nextPause(300));
+  TEST_ASSERT_EQUAL(10, nextPause(0));
+  TEST_ASSERT_EQUAL(30, nextPause(12345));
+  TEST_ASSERT_EQUAL(30, sanitizePause(7));
+  TEST_ASSERT_EQUAL(0, sanitizePause(0));
+  TEST_ASSERT_EQUAL(255, sanitizeVolume(999));
+  TEST_ASSERT_EQUAL(0, sanitizeVolume(-4));
+  TEST_ASSERT_EQUAL(5, sanitizeBrightness(0));
+}
+
+void test_formats() {
+  TEST_ASSERT_EQUAL_STRING("Muet", formatVolume(0).c_str());
+  TEST_ASSERT_EQUAL_STRING("100%", formatVolume(255).c_str());
+  TEST_ASSERT_EQUAL_STRING("90%", formatVolume(230).c_str());
+  TEST_ASSERT_EQUAL_STRING("43%", formatBrightness(110).c_str());
+  TEST_ASSERT_EQUAL_STRING("10 s", formatPause(10).c_str());
+  TEST_ASSERT_EQUAL_STRING("1 min", formatPause(60).c_str());
+  TEST_ASSERT_EQUAL_STRING("5 min", formatPause(300).c_str());
+  TEST_ASSERT_EQUAL_STRING("Jamais", formatPause(0).c_str());
+  TEST_ASSERT_EQUAL_STRING("0", formatCount(0).c_str());
+  TEST_ASSERT_EQUAL_STRING("99", formatCount(99).c_str());
+  TEST_ASSERT_EQUAL_STRING("99+", formatCount(100).c_str());
+  TEST_ASSERT_EQUAL_STRING("0", formatCount(-3).c_str());
+  TEST_ASSERT_EQUAL_STRING("87%", formatBattery(87).c_str());
+  TEST_ASSERT_EQUAL_STRING("--", formatBattery(-1).c_str());
+}
+
+void test_activity_and_agent_index() {
+  AgentState a, b, c;
+  a.status = "working"; b.status = "working"; b.stale = true; c.status = "idle";
+  Activity act = summarizeActivity({a, b, c});
+  TEST_ASSERT_EQUAL(1, act.working);
+  TEST_ASSERT_EQUAL(3, act.followed);
+  TEST_ASSERT_EQUAL(0, summarizeActivity({}).followed);
+  TEST_ASSERT_EQUAL(1, (int)nextAgentIndex(0, 3));
+  TEST_ASSERT_EQUAL(0, (int)nextAgentIndex(2, 3));
+  TEST_ASSERT_EQUAL(1, (int)nextAgentIndex(9, 3));  // index invalide -> 0 puis suivant
+  TEST_ASSERT_EQUAL(0, (int)nextAgentIndex(0, 0));
+  TEST_ASSERT_EQUAL(0, (int)clampAgentIndex(5, 2));
+}
+
+void test_battery_style() {
+  BatteryStyle s = batteryStyle(80, Charge::Discharging);
+  TEST_ASSERT_EQUAL_HEX16(0x07E0, s.color); TEST_ASSERT_FALSE(s.bolt); TEST_ASSERT_FALSE(s.low);
+  s = batteryStyle(30, Charge::Unknown);
+  TEST_ASSERT_EQUAL_HEX16(0xFD20, s.color); TEST_ASSERT_FALSE(s.bolt);
+  s = batteryStyle(10, Charge::Discharging);
+  TEST_ASSERT_EQUAL_HEX16(0xF800, s.color); TEST_ASSERT_TRUE(s.low);
+  s = batteryStyle(10, Charge::Charging);  // en charge : pas critique, eclair
+  TEST_ASSERT_TRUE(s.bolt); TEST_ASSERT_EQUAL_HEX16(0x07E0, s.color); TEST_ASSERT_FALSE(s.low);
+  s = batteryStyle(-1, Charge::Charging);
+  TEST_ASSERT_EQUAL(-1, s.level); TEST_ASSERT_TRUE(s.bolt);
+  s = batteryStyle(250, Charge::Discharging);
+  TEST_ASSERT_EQUAL(-1, s.level);
+}
+
+void test_main_actions() {
+  TEST_ASSERT_TRUE(mainAction(Button::Top, Press::Click, true) == MainAction::AckLatest);
+  TEST_ASSERT_TRUE(mainAction(Button::Top, Press::Click, false) == MainAction::NextAgent);
+  TEST_ASSERT_TRUE(mainAction(Button::Top, Press::Hold, true) == MainAction::NextAgent);
+  TEST_ASSERT_TRUE(mainAction(Button::Top, Press::DoubleClick, true) == MainAction::None);
+  TEST_ASSERT_TRUE(mainAction(Button::Front, Press::Click, true) == MainAction::Replay);
+  TEST_ASSERT_TRUE(mainAction(Button::Front, Press::Hold, false) == MainAction::Record);
+  TEST_ASSERT_TRUE(mainAction(Button::Front, Press::DoubleClick, false) == MainAction::OpenMenu);
+}
+
+void test_menu_root() {
+  MenuState m;
+  TEST_ASSERT_TRUE(menuStep(m, MenuEvent::TopClick) == MenuAct::VolumeNext);
+  TEST_ASSERT_TRUE(menuStep(m, MenuEvent::FrontClick) == MenuAct::Redraw);
+  TEST_ASSERT_TRUE(menuStep(m, MenuEvent::TopClick) == MenuAct::BrightnessNext);
+  menuStep(m, MenuEvent::FrontClick);
+  TEST_ASSERT_TRUE(menuStep(m, MenuEvent::TopClick) == MenuAct::PauseNext);
+  menuStep(m, MenuEvent::FrontClick);
+  TEST_ASSERT_TRUE(menuStep(m, MenuEvent::TopClick) == MenuAct::OpenAgents);
+  menuStep(m, MenuEvent::FrontClick);
+  TEST_ASSERT_TRUE(menuStep(m, MenuEvent::TopClick) == MenuAct::Close);
+  menuStep(m, MenuEvent::FrontClick);  // boucle
+  TEST_ASSERT_EQUAL(0, (int)m.cursor);
+  TEST_ASSERT_TRUE(menuStep(m, MenuEvent::FrontHold) == MenuAct::Close);
+  TEST_ASSERT_TRUE(menuStep(m, MenuEvent::Idle) == MenuAct::Close);
+  TEST_ASSERT_TRUE(menuStep(m, MenuEvent::TopHold) == MenuAct::None);
+}
+
+void test_menu_agents() {
+  MenuState m;
+  m.cursor = 3;
+  menuStep(m, MenuEvent::TopClick);  // OpenAgents
+  menuEnterAgents(m, 2);
+  TEST_ASSERT_TRUE(m.screen == MenuScreen::Agents);
+  TEST_ASSERT_EQUAL(0, (int)m.cursor);
+  TEST_ASSERT_EQUAL(3, (int)m.rows());
+  TEST_ASSERT_TRUE(menuStep(m, MenuEvent::TopClick) == MenuAct::ToggleAgent);
+  TEST_ASSERT_TRUE(menuStep(m, MenuEvent::TopHold) == MenuAct::ToggleMute);
+  menuStep(m, MenuEvent::FrontClick);
+  menuStep(m, MenuEvent::FrontClick);
+  TEST_ASSERT_TRUE(m.onSaveRow());
+  TEST_ASSERT_TRUE(menuStep(m, MenuEvent::TopClick) == MenuAct::SaveAgents);
+  TEST_ASSERT_TRUE(menuStep(m, MenuEvent::TopHold) == MenuAct::None);
+  menuStep(m, MenuEvent::FrontClick);
+  TEST_ASSERT_EQUAL(0, (int)m.cursor);  // boucle
+  TEST_ASSERT_TRUE(menuStep(m, MenuEvent::FrontHold) == MenuAct::Redraw);  // retour racine, sans enregistrer
+  TEST_ASSERT_TRUE(m.screen == MenuScreen::Root);
+  TEST_ASSERT_EQUAL(3, (int)m.cursor);
+  menuEnterAgents(m, 0);  // aucun agent : seule la ligne Enregistrer
+  TEST_ASSERT_EQUAL(1, (int)m.rows());
+  TEST_ASSERT_TRUE(menuStep(m, MenuEvent::Idle) == MenuAct::Close);
+}
+
 int main(int, char **) {
   UNITY_BEGIN();
   RUN_TEST(test_sha256_vectors);
@@ -654,5 +855,16 @@ int main(int, char **) {
   RUN_TEST(test_nudge_sounds_exist_and_bounded);
   RUN_TEST(test_nudge_sounds_and_styles_distinct);
   RUN_TEST(test_nudge_sound_shapes);
+  RUN_TEST(test_notif_push_merge_order);
+  RUN_TEST(test_notif_ack_and_capacity);
+  RUN_TEST(test_notif_restore_roundtrip);
+  RUN_TEST(test_pick_alert);
+  RUN_TEST(test_settings_cycles);
+  RUN_TEST(test_formats);
+  RUN_TEST(test_activity_and_agent_index);
+  RUN_TEST(test_battery_style);
+  RUN_TEST(test_main_actions);
+  RUN_TEST(test_menu_root);
+  RUN_TEST(test_menu_agents);
   return UNITY_END();
 }
