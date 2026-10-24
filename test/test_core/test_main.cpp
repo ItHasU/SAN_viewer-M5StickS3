@@ -513,6 +513,17 @@ void test_caps_json_exact() {
   TEST_ASSERT_EQUAL_STRING("065921302cd8ee02", capsHash(expected).c_str());  // hash renvoye par le vrai serveur
 }
 
+static void test_status_icon() {
+  TEST_ASSERT_TRUE(statusIcon("working", false).icon == Icon::Working);
+  TEST_ASSERT_TRUE(statusIcon("waiting", false).icon == Icon::Waiting);
+  TEST_ASSERT_TRUE(statusIcon("error", false).icon == Icon::Error);
+  TEST_ASSERT_TRUE(statusIcon("done", false).icon == Icon::Done);
+  TEST_ASSERT_TRUE(statusIcon("idle", false).icon == Icon::Idle);
+  TEST_ASSERT_TRUE(statusIcon("???", false).icon == Icon::Idle);
+  TEST_ASSERT_TRUE(statusIcon("error", true).icon == Icon::Stale);
+  TEST_ASSERT_NOT_EQUAL(statusIcon("done", false).color, statusIcon("error", false).color);
+}
+
 int main(int, char **) {
   UNITY_BEGIN();
   RUN_TEST(test_sha256_vectors);
@@ -546,5 +557,6 @@ int main(int, char **) {
   RUN_TEST(test_server_pcm_fixtures);
   RUN_TEST(test_server_ima_adpcm_fixtures);
   RUN_TEST(test_server_ima_without_fact_pads_last_block);
+  RUN_TEST(test_status_icon);
   return UNITY_END();
 }

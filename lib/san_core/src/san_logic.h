@@ -1,5 +1,6 @@
 // Logique de decision pure : machine a etats, curseur d'ack, ecran, troncature, veille.
 #pragma once
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -48,6 +49,15 @@ std::vector<AgentState> orderStates(const Config &cfg, const std::vector<AgentSt
 // Tronque a maxChars points de code UTF-8 ("..." final inclus dans la limite). maxChars<=0 : inchange.
 std::string truncateChars(const std::string &s, int maxChars);
 size_t utf8Length(const std::string &s);
+
+// ---- Icone d'etat (affichage : pictogramme + couleur RGB565) ----
+enum class Icon { Idle, Working, Waiting, Done, Error, Stale };
+struct IconStyle {
+  Icon icon;
+  uint16_t color;
+};
+// stale -> Stale (gris) ; statut inconnu ou idle -> Idle.
+IconStyle statusIcon(const std::string &status, bool stale);
 
 // ---- Veille ----
 // Duree de deep sleep : next_sync_s serveur borne [10, 3600], defaut 60 ; echecs consecutifs -> backoff.

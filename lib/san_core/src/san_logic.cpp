@@ -136,3 +136,14 @@ bool configDiffers(const Config &a, const Config &b) {
 }
 
 }  // namespace san
+
+namespace san {
+IconStyle statusIcon(const std::string &status, bool stale) {
+  if (stale) return {Icon::Stale, 0x7BEF};
+  if (status == "working") return {Icon::Working, 0x07FF};
+  if (status == "waiting") return {Icon::Waiting, 0xFD20};
+  if (status == "error") return {Icon::Error, 0xF800};
+  if (status == "done") return {Icon::Done, 0x07E0};
+  return {Icon::Idle, 0x7BEF};
+}
+}  // namespace san
