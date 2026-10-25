@@ -87,7 +87,7 @@ Document déclaré (`buildCapabilitiesJson`, `lib/san_core`) :
   (`Display.sleep()`) mais la mesure en µA reste à faire. Si trop élevée, piloter les rails via M5PM1.
 - Réveil par bouton : `ext1` sur G11/G12 (RTC IO, niveau bas). À valider sur carte (les deux GPIO sont des
   RTC IO sur S3, résistances de tirage externes supposées).
-- Gain du micro : `M5.Mic` par défaut ; un gain logiciel peut être nécessaire.
+- Gain du micro : `M5.Mic` par défaut, aucun gain ajouté (ni logiciel ni registre ES8311).
 
 - Réveil ext1 : `rtc_gpio_init` + entrée seule + pull-up sont désormais explicites avant le deep sleep (à valider).
 - État de charge : `M5.Power.isCharging()` (PMIC M5PM1) non vérifié sur carte ; `charge_unknown` n'affiche pas d'éclair.
@@ -176,8 +176,8 @@ Décisions sur les points ambigus ou ouverts :
 - **Deux volumes** : notifications (sons marimba, aperçu = `notification`) et vocaux (aperçu = bip 1 kHz). NVS `voln` /
   `volv`, repris de l'ancien `vol`.
 - **Micro** : démarré à l'appui frontal (si l'agent peut recevoir un vocal), annulé si l'appui est bref ; l'enregistrement
-  ne commence que 500 ms après le démarrage (`kMicSettleMs`, déjà écoulées avec le seuil d'appui long) ; gain numérique
-  +12 dB (x4) si le pic reste sous 32000, sinon le plus grand gain sans saturation (jamais en dessous de x1). À valider :
+  ne commence que 500 ms après le démarrage (`kMicSettleMs`, déjà écoulées avec le seuil d'appui long) ; aucun gain ajouté ;
+  fondus de 10 ms (entrée) et 20 ms (sortie) contre les clics. À valider :
   disparition du transitoire saturé, absence de clic à l'ouverture du micro à chaque appui frontal.
 - **RTC** : magic 0x53414E06 (format changé : plus de file de notifications, ajout des vocaux vus, du nombre de vocaux et
   de l'agent sélectionné).

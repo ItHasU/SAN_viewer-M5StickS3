@@ -170,14 +170,10 @@ void housekeeping() {
 
 // Demarre le micro des l'appui (avant la detection de l'appui long) : la montee du codec (transitoire ssature)
 // est ainsi absorbee pendant les 500 ms d'attente. Sans effet si deja demarre.
-// Baisse le gain d'entree de l'ES8311 apres le demarrage (M5Unified ecrit 0xFF = gain maximal a chaque begin()).
-static void micSetInputGain() { M5.In_I2C.writeRegister8(0x18, 0x17, cfg::kMicAdcVolume, 100000); }
-
 void micPrepare() {
   if (sMicOn) return;
   speakerOff();
   sMicOn = M5.Mic.begin();
-  if (sMicOn) micSetInputGain();
   sMicAt = millis();
 }
 
@@ -196,7 +192,6 @@ uint8_t *recordWav(bool (*isHeld)(), int rate, int maxSeconds, size_t *outLen, v
   if (!sMicOn) micPrepare();
   if (!sMicOn) { heap_caps_free(buf); return nullptr; }
   while ((uint32_t)(millis() - sMicAt) < (uint32_t)cfg::kMicSettleMs) delay(5);  // transitoire ignore
-  micSetInputGain();  // rearme au cas ou record() aurait relance le codec
   const size_t chunk = rate / 20;  // 50 ms
   size_t pos = 0;
   uint32_t t0 = millis();
@@ -211,10 +206,7 @@ uint8_t *recordWav(bool (*isHeld)(), int rate, int maxSeconds, size_t *outLen, v
   M5.Mic.end();
   sMicOn = false;
   if (pos * 1000 / rate < (size_t)cfg::kRecMinMs) { heap_caps_free(buf); return nullptr; }
-  const int peak = san::pcmPeak(pcm, pos), gq8 = san::micGainQ8(pcm, pos);
-  Serial.printf("[san] micro : pic brut %d (%d %%), gain %d/256, ADC 0x%02X\n", peak, peak * 100 / 32768, gq8, cfg::kMicAdcVolume);
-  san::applyGainQ8(pcm, pos, gq8);                       // pic vise ~65 %, max x2,5, sans saturation
-  san::applyFades(pcm, pos, rate);                       // fade-in 10 ms / fade-out 20 ms (anti-clics)
+  san::applyFades(pcm, pos, rate);  // fade-in 10 ms / fade-out 20 ms (anti-clics)
   san::buildWavHeader(buf, rate, pos * 2);
   *outLen = 44 + pos * 2;
   return buf;

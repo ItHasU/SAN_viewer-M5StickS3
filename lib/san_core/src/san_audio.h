@@ -27,15 +27,8 @@ size_t imaDecode(const WavInfo &w, const uint8_t *data, int16_t *out, size_t out
 // En-tete WAV PCM s16le mono de 44 octets.
 void buildWavHeader(uint8_t out[44], uint32_t sampleRate, uint32_t dataBytes);
 
-// Gain micro (Q8 : 256 = x1) calcule sur le pic du clip : vise un pic de kMicTarget (~65 % de l'echelle), plafonne a
-// kMicGainQ8 (x2,5 ~ +8 dB), jamais en dessous de x1 (clip deja fort : inchange). Silence : x2,5. Ne sature jamais.
-constexpr int kMicGainQ8 = 640;
-constexpr int kMicTarget = 21300;
 constexpr int kMicFadeInMs = 10;
 constexpr int kMicFadeOutMs = 20;
-int pcmPeak(const int16_t *pcm, size_t n);  // pic absolu (0..32768)
-int micGainQ8(const int16_t *pcm, size_t n);
-void applyGainQ8(int16_t *pcm, size_t n, int gainQ8);  // saturation par securite
 // Rampes lineaires : fade-in (kMicFadeInMs) et fade-out (kMicFadeOutMs) pour supprimer les clics de debut/fin.
 void applyFades(int16_t *pcm, size_t n, uint32_t rate);
 

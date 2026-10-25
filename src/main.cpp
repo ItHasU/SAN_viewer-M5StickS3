@@ -408,7 +408,7 @@ static void doRecord(const AgentState &s) {
   ui::recording(gRecAgent, 0, gRecMaxMs);
   net::wifiBegin(S);  // le Wi-Fi s'associe pendant l'enregistrement (SPEC 12.3) ; wifiConnect reprend sans relancer
   size_t len = 0;
-  // Le micro a ete demarre a l'appui (micPrepare) : transitoire du codec deja ecoule, gain +12 dB si pas de saturation.
+  // Le micro a ete demarre a l'appui (micPrepare) : transitoire du codec deja ecoule.
   uint8_t *buf = audio_io::recordWav(heldFront, cfg::kRecRate, cfg::kRecMaxS, &len, recTick);
   G.recording = false;
   if (!buf) { ui::message("Vocal", "Message trop court", TFT_ORANGE); waitOrButton(1200); return; }

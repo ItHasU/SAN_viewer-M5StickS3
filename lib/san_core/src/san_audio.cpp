@@ -106,32 +106,6 @@ void buildWavHeader(uint8_t h[44], uint32_t rate, uint32_t dataBytes) {
   memcpy(h + 36, "data", 4); wr32(h + 40, dataBytes);
 }
 
-int pcmPeak(const int16_t *pcm, size_t n) {
-  int peak = 0;
-  for (size_t i = 0; i < n; i++) {
-    int v = pcm[i] < 0 ? -(int)pcm[i] : pcm[i];
-    if (v > peak) peak = v;
-  }
-  return peak;
-}
-
-int micGainQ8(const int16_t *pcm, size_t n) {
-  int peak = pcmPeak(pcm, n);
-  if (peak == 0) return kMicGainQ8;
-  long g = (long)kMicTarget * 256 / peak;
-  if (g > kMicGainQ8) g = kMicGainQ8;
-  if (g < 256) g = 256;
-  return (int)g;
-}
-
-void applyGainQ8(int16_t *pcm, size_t n, int gainQ8) {
-  if (gainQ8 == 256) return;
-  for (size_t i = 0; i < n; i++) {
-    long v = ((long)pcm[i] * gainQ8) >> 8;
-    pcm[i] = (int16_t)(v > 32767 ? 32767 : v < -32768 ? -32768 : v);
-  }
-}
-
 void applyFades(int16_t *pcm, size_t n, uint32_t rate) {
   size_t fi = (size_t)rate * kMicFadeInMs / 1000, fo = (size_t)rate * kMicFadeOutMs / 1000;
   if (fi + fo > n) { fi = n / 3; fo = n / 3; }

@@ -21,9 +21,6 @@ constexpr int kPortalTimeoutS = 240;
 constexpr int kMaxAgents = 16;           // taille du cache RTC
 constexpr int kBootPortalHoldMs = 3000;  // bouton du dessus maintenu au boot : portail de config
 constexpr int kHoldMs = 500;             // appui long (enregistrement, menu, bascule d'agent)
-// Volume ADC de l'ES8311 (reg 0x17 : 0xBF = 0 dB, pas de 0,5 dB, 0xFF = +32 dB). M5Unified le met a 0xFF (+32 dB) puis
-// multiplie encore par 4 (magnification 16 / over_sampling 2) : la voix a 15 cm saturait en brut. 0xE7 = +20 dB (-12 dB).
-constexpr uint8_t kMicAdcVolume = 0xE7;
 constexpr int kMicSettleMs = 500;        // montee du codec micro (transitoire sature) : ignoree avant d'enregistrer
 constexpr int kBatteryRefreshMs = 30000;
 }  // namespace cfg
