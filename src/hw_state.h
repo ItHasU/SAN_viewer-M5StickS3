@@ -56,6 +56,8 @@ struct RtcState {
   int32_t lastClipRate;
   uint8_t active;       // viewer deja active (saute PAIRING au prochain boot)
   uint8_t failures;     // echecs reseau consecutifs
+  uint8_t wifiFails;    // echecs Wi-Fi consecutifs (notification Wi-Fi / son / retablissement)
+  uint8_t serverFails;  // echecs serveur consecutifs (Wi-Fi OK)
   uint8_t channel;
   uint8_t bssid[6];
   uint8_t nAgents;

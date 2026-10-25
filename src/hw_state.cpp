@@ -51,7 +51,7 @@ void tokenSave(Settings &s, const String &token) {
 void tokenClear(Settings &s) { tokenSave(s, ""); }
 
 // ---- RTC ----
-static const uint32_t kMagic = 0x53414E03;
+static const uint32_t kMagic = 0x53414E04;
 RTC_DATA_ATTR RtcState rtc;
 
 void rtcReset() {
@@ -178,6 +178,7 @@ void rtcStoreNotifs(const san::NotifQueue &q) {
   memset(rtc.notifs, 0, sizeof rtc.notifs);
   int n = 0;
   for (auto &it : q.items()) {
+    if (it.sys != san::Sys::None) continue;  // etat de connexion : ephemere (les compteurs d'echec, eux, sont en RTC)
     if (n >= (int)san::NotifQueue::kCapacity) break;
     RtcNotif &r = rtc.notifs[n++];
     cpy(r.slug, sizeof r.slug, it.agent);

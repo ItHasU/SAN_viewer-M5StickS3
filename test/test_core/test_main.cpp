@@ -673,6 +673,99 @@ void test_notif_restore_roundtrip() {
   TEST_ASSERT_EQUAL(16, (int)r.size());
 }
 
+// ---------- notifications systeme (connexion) ----------
+void test_sys_replace_and_merge() {
+  NotifQueue q;
+  q.push("a", NudgeType::Done, false, false, 1);
+  q.setSystem(Sys::Wifi, SysState::Connecting, 100);
+  TEST_ASSERT_TRUE(q.hasBusy());
+  TEST_ASSERT_EQUAL(1, q.total());  // la connexion en cours n'est pas comptee
+  q.setSystem(Sys::Wifi, SysState::Failed, 200);  // remplace (pas empile)
+  TEST_ASSERT_EQUAL(2, (int)q.size());
+  TEST_ASSERT_FALSE(q.hasBusy());
+  TEST_ASSERT_TRUE(q.recent(0)->type == NudgeType::Error);
+  TEST_ASSERT_EQUAL(2, q.total());
+  q.setSystem(Sys::Wifi, SysState::Failed, 300);  // meme etat : fusion avec compteur
+  TEST_ASSERT_EQUAL(2, (int)q.size());
+  TEST_ASSERT_EQUAL(2, q.recent(0)->count);
+  q.setSystem(Sys::Server, SysState::Failed, 310);
+  TEST_ASSERT_EQUAL(3, (int)q.size());
+  q.setSystem(Sys::Wifi, SysState::Recovered, 400);  // etat change : compteur remis a 1, redevient la plus recente
+  TEST_ASSERT_EQUAL(3, (int)q.size());
+  TEST_ASSERT_TRUE(q.recent(0)->sys == Sys::Wifi);
+  TEST_ASSERT_EQUAL(1, q.recent(0)->count);
+  TEST_ASSERT_TRUE(q.recent(0)->type == NudgeType::Done);
+  TEST_ASSERT_EQUAL_STRING("Wi-Fi", sysName(Sys::Wifi));
+  TEST_ASSERT_EQUAL_STRING("Serveur", sysName(Sys::Server));
+}
+
+void test_sys_isolated_from_agents() {
+  NotifQueue q;
+  q.setSystem(Sys::Server, SysState::Failed, 0);
+  q.push("", NudgeType::Error, false, false, 1);  // un agent sans slug ne fusionne pas avec une entree systeme
+  TEST_ASSERT_EQUAL(2, (int)q.size());
+  TEST_ASSERT_EQUAL(0, (int)q.ackAgent("Serveur"));
+  TEST_ASSERT_EQUAL(2, (int)q.size());
+  TEST_ASSERT_TRUE(q.clearSystem(Sys::Server));
+  TEST_ASSERT_FALSE(q.clearSystem(Sys::Server));
+  TEST_ASSERT_EQUAL(1, (int)q.size());
+  // acquittement par le bouton du dessus : retire l'entree systeme la plus recente
+  q.setSystem(Sys::Wifi, SysState::Failed, 0);
+  TEST_ASSERT_TRUE(q.ackLatest());
+  TEST_ASSERT_EQUAL(1, (int)q.size());
+}
+
+void test_sys_expire() {
+  NotifQueue q;
+  q.push("a", NudgeType::Done, false, false, 1);
+  q.setSystem(Sys::Wifi, SysState::Failed, 1000);
+  q.setSystem(Sys::Server, SysState::Recovered, 1000);
+  TEST_ASSERT_EQUAL(0, (int)q.expire(1000 + kRecoveredMs - 1));
+  TEST_ASSERT_EQUAL(3, (int)q.size());
+  TEST_ASSERT_EQUAL(1, (int)q.expire(1000 + kRecoveredMs));  // seul "OK" expire ; l'erreur et l'agent restent
+  TEST_ASSERT_EQUAL(2, (int)q.size());
+  TEST_ASSERT_TRUE(q.recent(0)->sys == Sys::Wifi);
+  // robuste au retour a zero de millis()
+  NotifQueue w;
+  w.setSystem(Sys::Wifi, SysState::Recovered, 0xFFFFFFFFu - 1000);
+  TEST_ASSERT_EQUAL(0, (int)w.expire(0xFFFFFFFFu - 500));
+  TEST_ASSERT_EQUAL(1, (int)w.expire(5000));
+}
+
+void test_conn_report() {
+  uint8_t f = 0;
+  ConnOutcome o = connReport(f, true, false);
+  TEST_ASSERT_FALSE(o.show);  // pas d'entree OK sans echec precedent
+  o = connReport(f, false, false);  // 1er echec, ecran eteint : silencieux
+  TEST_ASSERT_TRUE(o.show);
+  TEST_ASSERT_TRUE(o.state == SysState::Failed);
+  TEST_ASSERT_FALSE(o.sound);
+  TEST_ASSERT_EQUAL(1, f);
+  o = connReport(f, false, false);  // 2e echec consecutif : son meme ecran eteint
+  TEST_ASSERT_TRUE(o.sound);
+  o = connReport(f, false, false);  // 3e : plus de sonnerie a chaque reveil
+  TEST_ASSERT_FALSE(o.sound);
+  o = connReport(f, true, false);
+  TEST_ASSERT_TRUE(o.show);
+  TEST_ASSERT_TRUE(o.state == SysState::Recovered);
+  TEST_ASSERT_FALSE(o.sound);
+  TEST_ASSERT_EQUAL(0, f);
+  o = connReport(f, false, true);  // ecran allume : son des le 1er echec
+  TEST_ASSERT_TRUE(o.sound);
+  f = 250;
+  connReport(f, false, false);
+  TEST_ASSERT_EQUAL(250, f);
+}
+
+void test_sys_not_persisted_semantics() {
+  // restore() garde ce qu'on lui donne : c'est rtcStoreNotifs (firmware) qui exclut les entrees systeme.
+  NotifQueue q;
+  q.setSystem(Sys::Wifi, SysState::Failed, 0);
+  int persisted = 0;
+  for (auto &n : q.items()) if (n.sys == Sys::None) persisted++;
+  TEST_ASSERT_EQUAL(0, persisted);
+}
+
 void test_pick_alert() {
   std::vector<EventItem> ev;
   NudgeType t; bool h;
@@ -858,6 +951,11 @@ int main(int, char **) {
   RUN_TEST(test_notif_push_merge_order);
   RUN_TEST(test_notif_ack_and_capacity);
   RUN_TEST(test_notif_restore_roundtrip);
+  RUN_TEST(test_sys_replace_and_merge);
+  RUN_TEST(test_sys_isolated_from_agents);
+  RUN_TEST(test_sys_expire);
+  RUN_TEST(test_conn_report);
+  RUN_TEST(test_sys_not_persisted_semantics);
   RUN_TEST(test_pick_alert);
   RUN_TEST(test_settings_cycles);
   RUN_TEST(test_formats);
