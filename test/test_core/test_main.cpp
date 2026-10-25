@@ -945,27 +945,59 @@ void test_conn_report_sound() {
   TEST_ASSERT_EQUAL(250, f);
 }
 
+static int peakOf(const std::vector<int16_t> &v) {
+  int p = 0;
+  for (int16_t x : v) { int a = x < 0 ? -(int)x : x; if (a > p) p = a; }
+  return p;
+}
+
 void test_mic_gain() {
   std::vector<int16_t> quiet = {100, -200, 300, -1000};
-  TEST_ASSERT_EQUAL(1024, micGainQ8(quiet.data(), quiet.size()));  // +12 dB
-  applyGainQ8(quiet.data(), quiet.size(), 1024);
-  TEST_ASSERT_EQUAL(400, quiet[0]);
-  TEST_ASSERT_EQUAL(-4000, quiet[3]);
-  std::vector<int16_t> mid = {16000, -12000};  // x4 saturerait : gain reduit, sans saturation
+  TEST_ASSERT_EQUAL(640, micGainQ8(quiet.data(), quiet.size()));  // x2,5 max
+  applyGainQ8(quiet.data(), quiet.size(), 640);
+  TEST_ASSERT_EQUAL(250, quiet[0]);
+  TEST_ASSERT_EQUAL(-2500, quiet[3]);
+  std::vector<int16_t> mid = {16000, -12000};  // x2,5 depasserait 65 % : gain reduit
   int g = micGainQ8(mid.data(), mid.size());
-  TEST_ASSERT_TRUE(g > 256 && g < 1024);
+  TEST_ASSERT_TRUE(g > 256 && g < 640);
   applyGainQ8(mid.data(), mid.size(), g);
-  TEST_ASSERT_TRUE(mid[0] <= 32000 && mid[0] > 16000);
-  std::vector<int16_t> loud = {32767, -32768, 100};  // deja sature : x1
+  TEST_ASSERT_TRUE(peakOf(mid) <= 21300 && peakOf(mid) > 21000);
+  // Regle : pic final <= 0,7 de l'echelle, ou clip d'origine plus fort (alors inchange), jamais sature.
+  for (int pk : {50, 1000, 8000, 8500, 12000, 21000, 22000, 25000, 32000, 32767}) {
+    std::vector<int16_t> v = {(int16_t)(pk / 3), (int16_t)-pk, (int16_t)pk, 7};
+    int before = peakOf(v);
+    applyGainQ8(v.data(), v.size(), micGainQ8(v.data(), v.size()));
+    int after = peakOf(v);
+    TEST_ASSERT_TRUE(after >= before);
+    TEST_ASSERT_TRUE(after <= 32000 || before > 32000);
+    TEST_ASSERT_TRUE(after <= 22937 || after == before);  // 0,7 de l'echelle
+  }
+  std::vector<int16_t> loud = {30000, -30000, 100};  // deja fort : x1
   TEST_ASSERT_EQUAL(256, micGainQ8(loud.data(), loud.size()));
   applyGainQ8(loud.data(), loud.size(), 256);
-  TEST_ASSERT_EQUAL(32767, loud[0]);
+  TEST_ASSERT_EQUAL(30000, loud[0]);
   std::vector<int16_t> zero(10, 0);
-  TEST_ASSERT_EQUAL(1024, micGainQ8(zero.data(), zero.size()));
+  TEST_ASSERT_EQUAL(640, micGainQ8(zero.data(), zero.size()));
   std::vector<int16_t> edge = {30000, -30000};
-  applyGainQ8(edge.data(), 2, 1024);  // securite : pas de debordement
+  applyGainQ8(edge.data(), 2, 640);  // securite : pas de debordement
   TEST_ASSERT_EQUAL(32767, edge[0]);
   TEST_ASSERT_EQUAL(-32768, edge[1]);
+}
+
+void test_mic_fades() {
+  std::vector<int16_t> v(16000, 10000);  // 1 s a 16 kHz
+  applyFades(v.data(), v.size(), 16000);
+  TEST_ASSERT_EQUAL(0, v[0]);                     // demarre a 0
+  TEST_ASSERT_EQUAL(0, v[v.size() - 1]);          // finit a 0
+  TEST_ASSERT_TRUE(v[80] > 4000 && v[80] < 6000);  // mi fade-in (160 ech. = 10 ms)
+  TEST_ASSERT_EQUAL(10000, v[160]);               // plateau intact
+  TEST_ASSERT_EQUAL(10000, v[16000 - 321]);
+  TEST_ASSERT_TRUE(v[16000 - 160] > 4000 && v[16000 - 160] < 6000);  // mi fade-out (320 ech. = 20 ms)
+  for (size_t i = 1; i < 160; i++) TEST_ASSERT_TRUE(v[i] >= v[i - 1]);  // monotone
+  std::vector<int16_t> tiny(10, 5000);  // clip tres court : pas de debordement
+  applyFades(tiny.data(), tiny.size(), 16000);
+  std::vector<int16_t> none;
+  applyFades(none.data(), 0, 16000);
 }
 
 int main(int, char **) {
@@ -1025,5 +1057,6 @@ int main(int, char **) {
   RUN_TEST(test_agent_row_layout_and_breath);
   RUN_TEST(test_conn_report_sound);
   RUN_TEST(test_mic_gain);
+  RUN_TEST(test_mic_fades);
   return UNITY_END();
 }

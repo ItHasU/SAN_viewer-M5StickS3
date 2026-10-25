@@ -113,7 +113,7 @@ int micGainQ8(const int16_t *pcm, size_t n) {
     if (v > peak) peak = v;
   }
   if (peak == 0) return kMicGainQ8;
-  long g = (long)kMicCeiling * 256 / peak;
+  long g = (long)kMicTarget * 256 / peak;
   if (g > kMicGainQ8) g = kMicGainQ8;
   if (g < 256) g = 256;
   return (int)g;
@@ -125,6 +125,13 @@ void applyGainQ8(int16_t *pcm, size_t n, int gainQ8) {
     long v = ((long)pcm[i] * gainQ8) >> 8;
     pcm[i] = (int16_t)(v > 32767 ? 32767 : v < -32768 ? -32768 : v);
   }
+}
+
+void applyFades(int16_t *pcm, size_t n, uint32_t rate) {
+  size_t fi = (size_t)rate * kMicFadeInMs / 1000, fo = (size_t)rate * kMicFadeOutMs / 1000;
+  if (fi + fo > n) { fi = n / 3; fo = n / 3; }
+  for (size_t i = 0; i < fi; i++) pcm[i] = (int16_t)((long)pcm[i] * (long)i / (long)fi);
+  for (size_t i = 0; i < fo; i++) pcm[n - 1 - i] = (int16_t)((long)pcm[n - 1 - i] * (long)i / (long)fo);
 }
 
 }  // namespace san

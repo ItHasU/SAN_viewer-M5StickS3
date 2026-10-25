@@ -206,7 +206,8 @@ uint8_t *recordWav(bool (*isHeld)(), int rate, int maxSeconds, size_t *outLen, v
   M5.Mic.end();
   sMicOn = false;
   if (pos * 1000 / rate < (size_t)cfg::kRecMinMs) { heap_caps_free(buf); return nullptr; }
-  san::applyGainQ8(pcm, pos, san::micGainQ8(pcm, pos));  // +12 dB si ca ne sature pas
+  san::applyGainQ8(pcm, pos, san::micGainQ8(pcm, pos));  // pic vise ~65 %, max x2,5, sans saturation
+  san::applyFades(pcm, pos, rate);                       // fade-in 10 ms / fade-out 20 ms (anti-clics)
   san::buildWavHeader(buf, rate, pos * 2);
   *outLen = 44 + pos * 2;
   return buf;
