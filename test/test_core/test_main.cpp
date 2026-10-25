@@ -237,7 +237,7 @@ void test_all_config_agents_displayed() {
   Activity act = summarizeActivity(o);
   TEST_ASSERT_EQUAL(3, act.followed);
   TEST_ASSERT_EQUAL(1, act.working);
-  TEST_ASSERT_EQUAL(3, (int)buildScene(o, 0).agents.size());
+  TEST_ASSERT_EQUAL(3, (int)buildScene(o).agents.size());
   // Un changement vers "done" d'un agent "non suivi" allume l'ecran.
   TEST_ASSERT_TRUE(decideScreen(c, {{"nouveau", "working"}}, {n}, {}).screen);
 }
@@ -813,11 +813,22 @@ void test_activity_and_agent_index() {
   TEST_ASSERT_EQUAL(1, act.working);
   TEST_ASSERT_EQUAL(3, act.followed);
   TEST_ASSERT_EQUAL(0, summarizeActivity({}).followed);
-  TEST_ASSERT_EQUAL(1, (int)nextAgentIndex(0, 3));
-  TEST_ASSERT_EQUAL(0, (int)nextAgentIndex(2, 3));
-  TEST_ASSERT_EQUAL(1, (int)nextAgentIndex(9, 3));  // index invalide -> 0 puis suivant
-  TEST_ASSERT_EQUAL(0, (int)nextAgentIndex(0, 0));
-  TEST_ASSERT_EQUAL(0, (int)clampAgentIndex(5, 2));
+}
+
+void test_pick_voice_target() {
+  Config cfg;
+  cfg.agents = {{"a", "A", false, 0}, {"b", "B", true, 1}, {"c", "C", true, 2}};
+  std::vector<AgentState> st(3);
+  st[0].agent = "a"; st[1].agent = "b"; st[2].agent = "c";
+  TEST_ASSERT_EQUAL_STRING("c", pickVoiceTarget(cfg, st, "c").c_str());  // dernier vocal recu
+  TEST_ASSERT_EQUAL_STRING("b", pickVoiceTarget(cfg, st, "a").c_str());  // non autorise -> premier autorise
+  TEST_ASSERT_EQUAL_STRING("b", pickVoiceTarget(cfg, st, "").c_str());
+  TEST_ASSERT_EQUAL_STRING("b", pickVoiceTarget(cfg, st, "inconnu").c_str());
+  cfg.agents = {{"a", "A", true, 0}};
+  TEST_ASSERT_EQUAL_STRING("a", pickVoiceTarget(cfg, {st[0]}, "").c_str());  // agent unique
+  cfg.agents = {{"a", "A", false, 0}};
+  TEST_ASSERT_EQUAL_STRING("", pickVoiceTarget(cfg, {st[0]}, "a").c_str());  // aucun autorise
+  TEST_ASSERT_EQUAL_STRING("", pickVoiceTarget(cfg, {}, "").c_str());
 }
 
 void test_battery_style() {
@@ -837,8 +848,9 @@ void test_battery_style() {
 
 void test_main_actions() {
   TEST_ASSERT_TRUE(mainAction(Button::Top, Press::Click, true) == MainAction::AckLatest);
-  TEST_ASSERT_TRUE(mainAction(Button::Top, Press::Click, false) == MainAction::NextAgent);
-  TEST_ASSERT_TRUE(mainAction(Button::Top, Press::Hold, true) == MainAction::NextAgent);
+  TEST_ASSERT_TRUE(mainAction(Button::Top, Press::Click, false) == MainAction::None);  // plus de bascule d'agent
+  TEST_ASSERT_TRUE(mainAction(Button::Top, Press::Hold, true) == MainAction::None);
+  TEST_ASSERT_TRUE(mainAction(Button::Top, Press::Hold, false) == MainAction::None);
   TEST_ASSERT_TRUE(mainAction(Button::Top, Press::DoubleClick, true) == MainAction::None);
   TEST_ASSERT_TRUE(mainAction(Button::Front, Press::Click, true) == MainAction::Replay);
   TEST_ASSERT_TRUE(mainAction(Button::Front, Press::Hold, false) == MainAction::Record);
@@ -875,7 +887,7 @@ static AgentState mkAgent(const char *slug, const char *status, bool stale = fal
 void test_scene_styles() {
   std::vector<AgentState> st = {mkAgent("a", "working"), mkAgent("b", "idle"), mkAgent("c", "done"),
                                 mkAgent("d", "waiting"), mkAgent("e", "working", true)};
-  Scene s = buildScene(st, 2);
+  Scene s = buildScene(st);
   TEST_ASSERT_EQUAL(5, (int)s.agents.size());
   TEST_ASSERT_EQUAL(0, s.more);
   TEST_ASSERT_FALSE(s.calm);
@@ -884,34 +896,28 @@ void test_scene_styles() {
   TEST_ASSERT_TRUE(!s.agents[2].animated && s.agents[2].icon == Icon::Done);
   TEST_ASSERT_TRUE(!s.agents[3].animated && s.agents[3].icon == Icon::Waiting);
   TEST_ASSERT_TRUE(!s.agents[4].animated && s.agents[4].icon == Icon::Stale);  // perime : pas anime
-  TEST_ASSERT_TRUE(s.agents[2].selected && !s.agents[0].selected);
 }
 
 void test_scene_calm_and_empty() {
-  Scene e = buildScene({}, 0);
+  Scene e = buildScene({});
   TEST_ASSERT_TRUE(e.agents.empty() && e.calm && e.more == 0);
-  Scene c = buildScene({mkAgent("a", "idle"), mkAgent("b", "done")}, 0);
+  Scene c = buildScene({mkAgent("a", "idle"), mkAgent("b", "done")});
   TEST_ASSERT_TRUE(c.calm);
 }
 
 void test_scene_grouping() {
   std::vector<AgentState> st;
   for (int i = 0; i < 9; i++) st.push_back(mkAgent(("a" + std::to_string(i)).c_str(), "idle"));
-  Scene s = buildScene(st, 0);
+  Scene s = buildScene(st);
   TEST_ASSERT_EQUAL(5, (int)s.agents.size());  // 5 emplacements + "+4"
   TEST_ASSERT_EQUAL(4, s.more);
-  TEST_ASSERT_TRUE(s.agents[0].selected);
-  s = buildScene(st, 8);  // selection hors fenetre : la fenetre glisse
-  TEST_ASSERT_EQUAL(5, (int)s.agents.size());
-  TEST_ASSERT_EQUAL(4, s.more);
-  TEST_ASSERT_TRUE(s.agents[4].selected);
   std::vector<AgentState> six(st.begin(), st.begin() + 6);
-  s = buildScene(six, 0);
+  s = buildScene(six);
   TEST_ASSERT_EQUAL(6, (int)s.agents.size());  // 6 tiennent : pas de "+N"
   TEST_ASSERT_EQUAL(0, s.more);
   // un agent qui travaille cache derriere "+N" empeche quand meme la scene d'etre calme
   st[8].status = "working";
-  s = buildScene(st, 0);
+  s = buildScene(st);
   TEST_ASSERT_FALSE(s.calm);
 }
 
@@ -996,6 +1002,7 @@ int main(int, char **) {
   RUN_TEST(test_settings_cycles);
   RUN_TEST(test_formats);
   RUN_TEST(test_activity_and_agent_index);
+  RUN_TEST(test_pick_voice_target);
   RUN_TEST(test_battery_style);
   RUN_TEST(test_main_actions);
   RUN_TEST(test_menu_root);
