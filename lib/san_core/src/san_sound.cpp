@@ -40,9 +40,6 @@ const SoundSpec kSpecs[] = {
     {kError, 2, 0.182240f * kErrorBoost, true, 22080},
 };
 
-constexpr uint16_t kBlue = 0x249F, kOrange = 0xFD20, kPurple = 0x901F, kGreen = 0x07E0, kRed = 0xF800,
-                   kYellow = 0xFFE0;
-
 constexpr float kTwoPi = 6.28318530718f;
 
 float noteSample(const SoundNote &n, float t, bool rounded) {
@@ -110,16 +107,6 @@ bool SoundScheduler::poll(uint32_t nowMs, bool busy, NudgeType &out) {
   has_ = false;
   playing_ = true;
   return true;
-}
-
-NudgeStyle nudgeStyle(NudgeType t) {
-  switch (t) {
-    case NudgeType::Start: return {NudgeIcon::Play, kBlue, kBlue};
-    case NudgeType::Question: return {NudgeIcon::Question, kPurple, kYellow};
-    case NudgeType::Done: return {NudgeIcon::Check, kGreen, kGreen};
-    case NudgeType::Error: return {NudgeIcon::Cross, kRed, kRed};
-    default: return {NudgeIcon::Bell, kOrange, kOrange};
-  }
 }
 
 }  // namespace san

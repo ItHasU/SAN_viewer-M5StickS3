@@ -37,26 +37,6 @@ int64_t ackAfterProcessing(int64_t current, const std::vector<EventItem> &events
   return ack;
 }
 
-bool isNotableStatus(const std::string &s) { return s == "waiting" || s == "error" || s == "done"; }
-
-ScreenDecision decideScreen(const Config &cfg, const std::vector<PrevStatus> &prev,
-                            const std::vector<AgentState> &states, const std::vector<EventItem> &events) {
-  ScreenDecision d;
-  for (auto &e : events) {
-    d.alertEvents++;
-    d.screen = true;
-    d.sound = true;
-    if (e.isHigh()) d.highPriority = true;
-  }
-  for (auto &s : states) {
-    if (s.stale || !isNotableStatus(s.status)) continue;
-    bool changed = true;
-    for (auto &p : prev) if (p.agent == s.agent) { changed = (p.status != s.status); break; }
-    if (changed) d.screen = true;
-  }
-  return d;
-}
-
 std::vector<AgentState> orderStates(const Config &cfg, const std::vector<AgentState> &states) {
   std::vector<AgentState> out;
   std::vector<bool> used(states.size(), false);
@@ -104,15 +84,4 @@ int computeSleepSeconds(int nextSyncS, int failures) {
   return base;
 }
 
-}  // namespace san
-
-namespace san {
-IconStyle statusIcon(const std::string &status, bool stale) {
-  if (stale) return {Icon::Stale, 0x7BEF};
-  if (status == "working") return {Icon::Working, 0x07FF};
-  if (status == "waiting") return {Icon::Waiting, 0xFD20};
-  if (status == "error") return {Icon::Error, 0xF800};
-  if (status == "done") return {Icon::Done, 0x07E0};
-  return {Icon::Idle, 0x7BEF};
-}
 }  // namespace san

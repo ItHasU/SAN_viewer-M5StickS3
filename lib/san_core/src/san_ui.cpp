@@ -46,17 +46,7 @@ std::string formatPause(int s) {
   return std::to_string(s / 60) + " min";
 }
 
-std::string formatCount(int n) {
-  if (n < 0) n = 0;
-  return n > 99 ? "99+" : std::to_string(n);
-}
-
-Activity summarizeActivity(const std::vector<AgentState> &states) {
-  Activity a;
-  a.followed = (int)states.size();
-  for (auto &s : states) if (s.status == "working" && !s.stale) a.working++;
-  return a;
-}
+std::string formatYesNo(bool v) { return v ? "Oui" : "Non"; }
 
 size_t clampAgentIndex(size_t cur, size_t count) { return cur < count ? cur : 0; }
 size_t nextAgentIndex(size_t cur, size_t count) {
@@ -69,62 +59,9 @@ std::string agentLabel(const Config &cfg, const AgentState &s, int maxChars) {
   return truncateChars(a && !a->name.empty() ? a->name : s.agent, maxChars);
 }
 
-Scene buildScene(const std::vector<AgentState> &states, size_t sel, size_t maxShown) {
-  Scene sc;
-  if (maxShown < 2) maxShown = 2;
-  size_t n = states.size(), first = 0, count = n;
-  if (n > maxShown) {
-    count = maxShown - 1;
-    sel = clampAgentIndex(sel, n);
-    if (sel >= count) first = sel - count + 1;
-    sc.more = (int)(n - count);
-  }
-  for (size_t i = first; i < first + count && i < n; i++) {
-    IconStyle st = statusIcon(states[i].status, states[i].stale);
-    bool working = st.icon == Icon::Working;
-    sc.agents.push_back({st.icon, st.color, working, i == sel});
-    if (working) sc.calm = false;
-  }
-  // "+N" masque aussi des agents qui travaillent : ils comptent pour l'animation
-  for (size_t i = 0; i < n; i++)
-    if (!(i >= first && i < first + count) && statusIcon(states[i].status, states[i].stale).icon == Icon::Working) sc.calm = false;
-  return sc;
-}
-
-int sceneBreath(uint32_t frame) {
-  int p = (int)(frame % 48), tri = p < 24 ? p : 48 - p;
-  return tri * 4 / 24 - 2;
-}
-
-NotifLayout notifLayout(int n) {
-  NotifLayout l{0, 0, 0};
-  if (n <= 0) return l;
-  l.shown = n > kMaxNotifLines ? kMaxNotifLines : n;
-  int avail = kStatusY - 1 - kSummaryH;  // 84
-  l.lineH = avail / l.shown;             // 3 -> 28 ; 2 -> 42 ; 1 -> 84
-  if (l.lineH > 40) l.lineH = 40;
-  l.summaryY = l.shown * l.lineH;
-  return l;
-}
-
-IconRow iconRowLayout(int slots, int width) {
-  IconRow g{24, width, 0, 0};
-  if (slots < 1) slots = 1;
-  g.slotW = width / slots;
-  int r = (g.slotW - 6) / 2;
-  g.r = r > 24 ? 24 : r < 8 ? 8 : r;
-  int zone = kStatusY - 1;                    // zone utile (au-dessus du separateur)
-  int iconsH = 2 * g.r + 10;                  // rebond (2) + soulignement (6) + marges
-  int block = iconsH + 4 + kNameH;
-  int top = (zone - block) / 2;
-  if (top < 0) top = 0;
-  g.cy = top + 5 + g.r;
-  g.nameCy = top + iconsH + 4 + kNameH / 2;
-  return g;
-}
-
-Summary buildSummary(int pending, int working, int followed) {
-  return {formatCount(pending), followed > 0, working > 0, formatCount(working) + "/" + formatCount(followed)};
+size_t agentIndexBySlug(const std::vector<AgentState> &states, const std::string &slug, size_t fallback) {
+  for (size_t i = 0; i < states.size(); i++) if (states[i].agent == slug) return i;
+  return clampAgentIndex(fallback, states.size());
 }
 
 size_t menuFirstRow(size_t cursor, size_t total, size_t visible) {
@@ -153,36 +90,41 @@ std::string formatBattery(int level) {
   return level < 0 || level > 100 ? "--" : std::to_string(level) + "%";
 }
 
-MainAction mainAction(Button b, Press p, bool hasNotifications) {
-  if (b == Button::Top) {
-    if (p == Press::Click) return hasNotifications ? MainAction::AckLatest : MainAction::NextAgent;
-    if (p == Press::Hold) return MainAction::NextAgent;
-    return MainAction::None;
+MainAction mainAction(Button b, Press p) {
+  if (b == Button::Top) return p == Press::Click ? MainAction::NextAgent : MainAction::OpenMenu;
+  return p == Press::Click ? MainAction::PlayVoice : MainAction::Record;
+}
+
+const char *menuLabel(MenuItem it) {
+  switch (it) {
+    case MenuItem::VolNotif: return "Vol. notifs";
+    case MenuItem::VolVoice: return "Vol. vocaux";
+    case MenuItem::Brightness: return "Lumiere";
+    case MenuItem::Pause: return "Pause";
+    case MenuItem::AutoPlay: return "Lecture auto";
+    case MenuItem::WifiConfig: return "Mode AP (Wi-Fi)";
+    default: return "Reinitialiser";
   }
-  switch (p) {
-    case Press::Click: return MainAction::Replay;
-    case Press::Hold: return MainAction::Record;
-    case Press::DoubleClick: return MainAction::OpenMenu;
-  }
-  return MainAction::None;
 }
 
 MenuAct menuStep(MenuState &m, MenuEvent e) {
-  if (e == MenuEvent::Idle) return MenuAct::Close;
-  if (e == MenuEvent::FrontClick) {
-    m.cursor = (m.cursor + 1) % kMenuRootRows;
-    return MenuAct::Redraw;
-  }
-  if (e == MenuEvent::FrontHold) return MenuAct::Close;
-  if (e == MenuEvent::TopClick) {
-    switch (m.item()) {
-      case MenuItem::Volume: return MenuAct::VolumeNext;
-      case MenuItem::Brightness: return MenuAct::BrightnessNext;
-      case MenuItem::Pause: return MenuAct::PauseNext;
-      case MenuItem::WifiConfig: return MenuAct::WifiConfig;
-      case MenuItem::Reset: return MenuAct::AskReset;
-      case MenuItem::Exit: return MenuAct::Close;
-    }
+  switch (e) {
+    case MenuEvent::Idle:
+    case MenuEvent::TopHold: return MenuAct::Close;
+    case MenuEvent::TopClick:
+      m.cursor = (m.cursor + 1) % kMenuRows;
+      return MenuAct::Redraw;
+    case MenuEvent::FrontHold: return MenuAct::None;
+    case MenuEvent::FrontClick:
+      switch (m.item()) {
+        case MenuItem::VolNotif: return MenuAct::VolNotifNext;
+        case MenuItem::VolVoice: return MenuAct::VolVoiceNext;
+        case MenuItem::Brightness: return MenuAct::BrightnessNext;
+        case MenuItem::Pause: return MenuAct::PauseNext;
+        case MenuItem::AutoPlay: return MenuAct::AutoPlayToggle;
+        case MenuItem::WifiConfig: return MenuAct::WifiConfig;
+        case MenuItem::Reset: return MenuAct::AskReset;
+      }
   }
   return MenuAct::None;
 }

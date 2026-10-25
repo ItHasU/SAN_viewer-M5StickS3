@@ -1,4 +1,4 @@
-// Sons et styles des nudges par type (donnees pures, jouees par le firmware via M5.Speaker.tone).
+// Sons des nudges : synthese marimba (docs/SONS.md), type de nudge et regles anti-bruit.
 #pragma once
 #include <cstddef>
 #include <cstdint>
@@ -53,13 +53,5 @@ class SoundScheduler {
   NudgeType type_ = NudgeType::Notification;
   uint32_t endAt_ = 0;
 };
-
-enum class NudgeIcon { Play, Bell, Question, Check, Cross };
-struct NudgeStyle {
-  NudgeIcon icon;
-  uint16_t color;   // RGB565 : teinte du type (fond vif en priorite haute, fond sombre sinon)
-  uint16_t accent;  // couleur du pictogramme sur fond sombre
-};
-NudgeStyle nudgeStyle(NudgeType t);
 
 }  // namespace san

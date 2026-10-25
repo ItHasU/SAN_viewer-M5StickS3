@@ -12,7 +12,7 @@
 
 #include "san_audio.h"
 #include "san_logic.h"
-#include "san_notify.h"
+#include "san_board.h"
 #include "san_ui.h"
 #include "san_protocol.h"
 #include "san_sound.h"
@@ -202,39 +202,6 @@ static Config cfg2() {
   parseSync(fx("sync_with_config.json"), r);
   return r.config;  // build-1, veille, nouveau (champs subscribed/muted du fixture ignores)
 }
-void test_screen_events() {
-  Config c = cfg2();
-  SyncResponse s;
-  parseSync(fx("sync_full.json"), s);
-  ScreenDecision d = decideScreen(c, {}, s.states, s.events);
-  TEST_ASSERT_TRUE(d.screen);
-  TEST_ASSERT_TRUE(d.sound);
-  TEST_ASSERT_TRUE(d.highPriority);
-  TEST_ASSERT_EQUAL(2, d.alertEvents);  // tous les evenements comptent
-}
-void test_screen_ignores_filters() {
-  // Plus de filtre local : un evenement d'un agent "muet" ou "non suivi" cote serveur alerte comme les autres.
-  Config c = cfg2();
-  EventItem e; e.id = 1; e.agent = "veille"; e.kind = "nudge";
-  ScreenDecision d = decideScreen(c, {}, {}, {e});
-  TEST_ASSERT_TRUE(d.screen);
-  TEST_ASSERT_TRUE(d.sound);
-}
-void test_screen_state_change() {
-  Config c = cfg2();
-  AgentState s; s.agent = "build-1"; s.status = "error";
-  TEST_ASSERT_TRUE(decideScreen(c, {{"build-1", "working"}}, {s}, {}).screen);
-  TEST_ASSERT_FALSE(decideScreen(c, {{"build-1", "error"}}, {s}, {}).screen);  // inchange
-  TEST_ASSERT_FALSE(decideScreen(c, {{"build-1", "working"}}, {s}, {}).sound);
-  s.status = "working";
-  TEST_ASSERT_FALSE(decideScreen(c, {{"build-1", "idle"}}, {s}, {}).screen);   // pas notable
-  s.status = "error"; s.stale = true;
-  TEST_ASSERT_FALSE(decideScreen(c, {}, {s}, {}).screen);                     // perime
-  s.stale = false; s.agent = "veille";
-  TEST_ASSERT_TRUE(decideScreen(c, {}, {s}, {}).screen);                      // "muet" cote serveur : ignore
-  s.agent = "nouveau";
-  TEST_ASSERT_TRUE(decideScreen(c, {}, {s}, {}).screen);                      // "non suivi" : ignore
-}
 void test_order_states() {
   Config c = cfg2();
   AgentState a; a.agent = "veille";
@@ -257,12 +224,9 @@ void test_all_config_agents_displayed() {
   TEST_ASSERT_EQUAL_STRING("build-1", o[0].agent.c_str());
   TEST_ASSERT_EQUAL_STRING("veille", o[1].agent.c_str());
   TEST_ASSERT_EQUAL_STRING("nouveau", o[2].agent.c_str());
-  Activity act = summarizeActivity(o);
-  TEST_ASSERT_EQUAL(3, act.followed);
-  TEST_ASSERT_EQUAL(1, act.working);
-  TEST_ASSERT_EQUAL(3, (int)buildScene(o, 0).agents.size());
-  // Un changement vers "done" d'un agent "non suivi" allume l'ecran.
-  TEST_ASSERT_TRUE(decideScreen(c, {{"nouveau", "working"}}, {n}, {}).screen);
+  TEST_ASSERT_EQUAL(3, (int)buildAgentRow(o, 0).cells.size());
+  // Un changement vers "done" d'un agent "non suivi" cote serveur compte comme les autres.
+  TEST_ASSERT_TRUE(diffStates({{"nouveau", "working", {}}}, {n}).changed);
 }
 
 // ---------- texte / veille ----------
@@ -518,17 +482,6 @@ void test_caps_json_exact() {
   TEST_ASSERT_EQUAL_STRING("065921302cd8ee02", capsHash(expected).c_str());  // hash renvoye par le vrai serveur
 }
 
-static void test_status_icon() {
-  TEST_ASSERT_TRUE(statusIcon("working", false).icon == Icon::Working);
-  TEST_ASSERT_TRUE(statusIcon("waiting", false).icon == Icon::Waiting);
-  TEST_ASSERT_TRUE(statusIcon("error", false).icon == Icon::Error);
-  TEST_ASSERT_TRUE(statusIcon("done", false).icon == Icon::Done);
-  TEST_ASSERT_TRUE(statusIcon("idle", false).icon == Icon::Idle);
-  TEST_ASSERT_TRUE(statusIcon("???", false).icon == Icon::Idle);
-  TEST_ASSERT_TRUE(statusIcon("error", true).icon == Icon::Stale);
-  TEST_ASSERT_NOT_EQUAL(statusIcon("done", false).color, statusIcon("error", false).color);
-}
-
 // ---------- types de nudge / sons ----------
 static const NudgeType kAllTypes[] = {NudgeType::Start, NudgeType::Notification, NudgeType::Question,
                                       NudgeType::Done, NudgeType::Error};
@@ -626,9 +579,6 @@ void test_sound_error_is_low_and_distinct() {
   for (size_t i = 0; i < 5; i++)
     for (size_t j = i + 1; j < 5; j++) {
       TEST_ASSERT_TRUE(renderAll(kAllTypes[i], 512) != renderAll(kAllTypes[j], 512));
-      NudgeStyle a = nudgeStyle(kAllTypes[i]), b = nudgeStyle(kAllTypes[j]);
-      TEST_ASSERT_TRUE(a.icon != b.icon);
-      TEST_ASSERT_TRUE(a.color != b.color);
     }
 }
 
@@ -674,228 +624,8 @@ void test_sound_scheduler_rules() {
 }
 
 // ---------- file de notifications ----------
-void test_notif_push_merge_order() {
-  NotifQueue q;
-  q.push("a", NudgeType::Question, false, false, 1);
-  q.push("b", NudgeType::Done, false, false, 2);
-  q.push("a", NudgeType::Question, false, true, 3);  // fusion : redevient la plus recente
-  TEST_ASSERT_EQUAL(2, (int)q.size());
-  TEST_ASSERT_EQUAL(3, q.total());
-  TEST_ASSERT_EQUAL_STRING("a", q.recent(0)->agent.c_str());
-  TEST_ASSERT_EQUAL(2, q.recent(0)->count);
-  TEST_ASSERT_TRUE(q.recent(0)->high);
-  TEST_ASSERT_EQUAL(3, (int)q.recent(0)->id);
-  TEST_ASSERT_EQUAL_STRING("b", q.recent(1)->agent.c_str());
-  TEST_ASSERT_NULL(q.recent(2));
-  // type ou voix differents : pas de fusion
-  q.push("a", NudgeType::Done, false, false, 4);
-  q.push("a", NudgeType::Done, true, false, 5);
-  TEST_ASSERT_EQUAL(4, (int)q.size());
-}
-
-void test_notif_ack_and_capacity() {
-  NotifQueue q;
-  for (int i = 0; i < 20; i++) q.push("ag" + std::to_string(i), NudgeType::Notification, false, false, i);
-  TEST_ASSERT_EQUAL(16, (int)q.size());
-  TEST_ASSERT_EQUAL_STRING("ag19", q.recent(0)->agent.c_str());
-  TEST_ASSERT_EQUAL_STRING("ag4", q.recent(15)->agent.c_str());  // les plus anciens sont perdus
-  auto l = q.latest(3);
-  TEST_ASSERT_EQUAL(3, (int)l.size());
-  TEST_ASSERT_EQUAL_STRING("ag18", l[1].agent.c_str());
-  TEST_ASSERT_TRUE(q.ackLatest());
-  TEST_ASSERT_EQUAL_STRING("ag18", q.recent(0)->agent.c_str());
-  TEST_ASSERT_TRUE(q.ackRecent(1));
-  TEST_ASSERT_EQUAL_STRING("ag16", q.recent(1)->agent.c_str());
-  TEST_ASSERT_FALSE(q.ackRecent(99));
-  TEST_ASSERT_EQUAL(1, (int)q.ackAgent("ag5"));
-  q.ackAll();
-  TEST_ASSERT_TRUE(q.empty());
-  TEST_ASSERT_FALSE(q.ackLatest());
-  TEST_ASSERT_EQUAL(0, q.total());
-}
-
-void test_notif_restore_roundtrip() {
-  NotifQueue q;
-  q.push("x", NudgeType::Error, false, true, 7);
-  q.push("y", NudgeType::Start, true, false, 8);
-  NotifQueue r;
-  r.restore(q.items());
-  TEST_ASSERT_EQUAL(2, (int)r.size());
-  TEST_ASSERT_EQUAL_STRING("y", r.recent(0)->agent.c_str());
-  TEST_ASSERT_TRUE(r.recent(1)->high);
-  std::vector<Notif> big(40);
-  r.restore(big);
-  TEST_ASSERT_EQUAL(16, (int)r.size());
-}
-
 // ---------- notifications systeme (connexion) ----------
-void test_sys_replace_and_merge() {
-  NotifQueue q;
-  q.push("a", NudgeType::Done, false, false, 1);
-  q.setSystem(Sys::Wifi, SysState::Connecting, 100);
-  TEST_ASSERT_TRUE(q.hasBusy());
-  TEST_ASSERT_EQUAL(1, q.total());  // la connexion en cours n'est pas comptee
-  q.setSystem(Sys::Wifi, SysState::Failed, 200);  // remplace (pas empile)
-  TEST_ASSERT_EQUAL(2, (int)q.size());
-  TEST_ASSERT_FALSE(q.hasBusy());
-  TEST_ASSERT_TRUE(q.recent(0)->type == NudgeType::Error);
-  TEST_ASSERT_EQUAL(2, q.total());
-  q.setSystem(Sys::Wifi, SysState::Failed, 300);  // meme etat : fusion avec compteur
-  TEST_ASSERT_EQUAL(2, (int)q.size());
-  TEST_ASSERT_EQUAL(2, q.recent(0)->count);
-  q.setSystem(Sys::Server, SysState::Failed, 310);
-  TEST_ASSERT_EQUAL(3, (int)q.size());
-  q.setSystem(Sys::Wifi, SysState::Recovered, 400);  // etat change : compteur remis a 1, redevient la plus recente
-  TEST_ASSERT_EQUAL(3, (int)q.size());
-  TEST_ASSERT_TRUE(q.recent(0)->sys == Sys::Wifi);
-  TEST_ASSERT_EQUAL(1, q.recent(0)->count);
-  TEST_ASSERT_TRUE(q.recent(0)->type == NudgeType::Done);
-  TEST_ASSERT_EQUAL_STRING("Wi-Fi", sysName(Sys::Wifi));
-  TEST_ASSERT_EQUAL_STRING("Serveur", sysName(Sys::Server));
-}
-
-void test_sys_isolated_from_agents() {
-  NotifQueue q;
-  q.setSystem(Sys::Server, SysState::Failed, 0);
-  q.push("", NudgeType::Error, false, false, 1);  // un agent sans slug ne fusionne pas avec une entree systeme
-  TEST_ASSERT_EQUAL(2, (int)q.size());
-  TEST_ASSERT_EQUAL(0, (int)q.ackAgent("Serveur"));
-  TEST_ASSERT_EQUAL(2, (int)q.size());
-  TEST_ASSERT_TRUE(q.clearSystem(Sys::Server));
-  TEST_ASSERT_FALSE(q.clearSystem(Sys::Server));
-  TEST_ASSERT_EQUAL(1, (int)q.size());
-  // acquittement par le bouton du dessus : retire l'entree systeme la plus recente
-  q.setSystem(Sys::Wifi, SysState::Failed, 0);
-  TEST_ASSERT_TRUE(q.ackLatest());
-  TEST_ASSERT_EQUAL(1, (int)q.size());
-}
-
-void test_sys_expire() {
-  NotifQueue q;
-  q.push("a", NudgeType::Done, false, false, 1);
-  q.setSystem(Sys::Wifi, SysState::Failed, 1000);
-  q.setSystem(Sys::Server, SysState::Recovered, 1000);
-  TEST_ASSERT_EQUAL(0, (int)q.expire(1000 + kRecoveredMs - 1));
-  TEST_ASSERT_EQUAL(3, (int)q.size());
-  TEST_ASSERT_EQUAL(1, (int)q.expire(1000 + kRecoveredMs));  // seul "OK" expire ; l'erreur et l'agent restent
-  TEST_ASSERT_EQUAL(2, (int)q.size());
-  TEST_ASSERT_TRUE(q.recent(0)->sys == Sys::Wifi);
-  // robuste au retour a zero de millis()
-  NotifQueue w;
-  w.setSystem(Sys::Wifi, SysState::Recovered, 0xFFFFFFFFu - 1000);
-  TEST_ASSERT_EQUAL(0, (int)w.expire(0xFFFFFFFFu - 500));
-  TEST_ASSERT_EQUAL(1, (int)w.expire(5000));
-}
-
-void test_conn_report() {
-  uint8_t f = 0;
-  ConnOutcome o = connReport(f, true, false);
-  TEST_ASSERT_FALSE(o.show);  // pas d'entree OK sans echec precedent
-  o = connReport(f, false, false);  // 1er echec, ecran eteint : silencieux
-  TEST_ASSERT_TRUE(o.show);
-  TEST_ASSERT_TRUE(o.state == SysState::Failed);
-  TEST_ASSERT_FALSE(o.sound);
-  TEST_ASSERT_EQUAL(1, f);
-  o = connReport(f, false, false);  // 2e echec consecutif : son meme ecran eteint
-  TEST_ASSERT_TRUE(o.sound);
-  o = connReport(f, false, false);  // 3e : plus de sonnerie a chaque reveil
-  TEST_ASSERT_FALSE(o.sound);
-  o = connReport(f, true, false);
-  TEST_ASSERT_TRUE(o.show);
-  TEST_ASSERT_TRUE(o.state == SysState::Recovered);
-  TEST_ASSERT_FALSE(o.sound);
-  TEST_ASSERT_EQUAL(0, f);
-  o = connReport(f, false, true);  // ecran allume : son des le 1er echec
-  TEST_ASSERT_TRUE(o.sound);
-  f = 250;
-  connReport(f, false, false);
-  TEST_ASSERT_EQUAL(250, f);
-}
-
-void test_sys_not_persisted_semantics() {
-  // restore() garde ce qu'on lui donne : c'est rtcStoreNotifs (firmware) qui exclut les entrees systeme.
-  NotifQueue q;
-  q.setSystem(Sys::Wifi, SysState::Failed, 0);
-  int persisted = 0;
-  for (auto &n : q.items()) if (n.sys == Sys::None) persisted++;
-  TEST_ASSERT_EQUAL(0, persisted);
-}
-
-void test_pick_alert() {
-  std::vector<EventItem> ev;
-  NudgeType t; bool h;
-  TEST_ASSERT_FALSE(pickAlert(ev, t, h));
-  EventItem a; a.kind = "nudge"; a.type = NudgeType::Done;
-  EventItem b; b.kind = "nudge"; b.type = NudgeType::Error;
-  EventItem c; c.kind = "voice";
-  EventItem d; d.kind = "nudge"; d.type = NudgeType::Question; d.priority = "high";
-  ev = {a, c};
-  TEST_ASSERT_TRUE(pickAlert(ev, t, h));
-  TEST_ASSERT_TRUE(t == NudgeType::Done); TEST_ASSERT_FALSE(h);
-  ev = {a, b};
-  pickAlert(ev, t, h);
-  TEST_ASSERT_TRUE(t == NudgeType::Error);
-  ev = {b, a, d};
-  pickAlert(ev, t, h);
-  TEST_ASSERT_TRUE(t == NudgeType::Question); TEST_ASSERT_TRUE(h);
-  ev = {c};
-  TEST_ASSERT_FALSE(pickAlert(ev, t, h));
-}
-
 // ---------- reglages ----------
-void test_settings_cycles() {
-  // le volume par defaut est atteignable et le cycle boucle
-  int v = 0, seen230 = 0;
-  for (int i = 0; i < 7; i++) { v = nextVolume(v); if (v == 230) seen230++; }
-  TEST_ASSERT_EQUAL(0, v);
-  TEST_ASSERT_EQUAL(1, seen230);
-  TEST_ASSERT_EQUAL(255, nextVolume(230));
-  TEST_ASSERT_EQUAL(0, nextVolume(255));
-  TEST_ASSERT_EQUAL(192, nextVolume(150));  // valeur hors serie : plus proche (160), puis suivante
-  TEST_ASSERT_EQUAL(210, nextBrightness(160));
-  TEST_ASSERT_EQUAL(20, nextBrightness(255));
-  TEST_ASSERT_EQUAL(30, nextPause(10));
-  TEST_ASSERT_EQUAL(0, nextPause(300));
-  TEST_ASSERT_EQUAL(10, nextPause(0));
-  TEST_ASSERT_EQUAL(30, nextPause(12345));
-  TEST_ASSERT_EQUAL(30, sanitizePause(7));
-  TEST_ASSERT_EQUAL(0, sanitizePause(0));
-  TEST_ASSERT_EQUAL(255, sanitizeVolume(999));
-  TEST_ASSERT_EQUAL(0, sanitizeVolume(-4));
-  TEST_ASSERT_EQUAL(5, sanitizeBrightness(0));
-}
-
-void test_formats() {
-  TEST_ASSERT_EQUAL_STRING("Muet", formatVolume(0).c_str());
-  TEST_ASSERT_EQUAL_STRING("100%", formatVolume(255).c_str());
-  TEST_ASSERT_EQUAL_STRING("90%", formatVolume(230).c_str());
-  TEST_ASSERT_EQUAL_STRING("43%", formatBrightness(110).c_str());
-  TEST_ASSERT_EQUAL_STRING("10 s", formatPause(10).c_str());
-  TEST_ASSERT_EQUAL_STRING("1 min", formatPause(60).c_str());
-  TEST_ASSERT_EQUAL_STRING("5 min", formatPause(300).c_str());
-  TEST_ASSERT_EQUAL_STRING("Jamais", formatPause(0).c_str());
-  TEST_ASSERT_EQUAL_STRING("0", formatCount(0).c_str());
-  TEST_ASSERT_EQUAL_STRING("99", formatCount(99).c_str());
-  TEST_ASSERT_EQUAL_STRING("99+", formatCount(100).c_str());
-  TEST_ASSERT_EQUAL_STRING("0", formatCount(-3).c_str());
-  TEST_ASSERT_EQUAL_STRING("87%", formatBattery(87).c_str());
-  TEST_ASSERT_EQUAL_STRING("--", formatBattery(-1).c_str());
-}
-
-void test_activity_and_agent_index() {
-  AgentState a, b, c;
-  a.status = "working"; b.status = "working"; b.stale = true; c.status = "idle";
-  Activity act = summarizeActivity({a, b, c});
-  TEST_ASSERT_EQUAL(1, act.working);
-  TEST_ASSERT_EQUAL(3, act.followed);
-  TEST_ASSERT_EQUAL(0, summarizeActivity({}).followed);
-  TEST_ASSERT_EQUAL(1, (int)nextAgentIndex(0, 3));
-  TEST_ASSERT_EQUAL(0, (int)nextAgentIndex(2, 3));
-  TEST_ASSERT_EQUAL(1, (int)nextAgentIndex(9, 3));  // index invalide -> 0 puis suivant
-  TEST_ASSERT_EQUAL(0, (int)nextAgentIndex(0, 0));
-  TEST_ASSERT_EQUAL(0, (int)clampAgentIndex(5, 2));
-}
-
 void test_agent_label() {
   Config cfg;
   cfg.agents = {{"claude-code", "Claude Code", true, 0}, {"long", "Un nom d'agent vraiment tres long", true, 1}};
@@ -923,140 +653,89 @@ void test_battery_style() {
   TEST_ASSERT_EQUAL(-1, s.level);
 }
 
+// ---------- reglages ----------
+void test_settings_cycles() {
+  // le volume par defaut est atteignable et le cycle boucle
+  int v = 0, seen230 = 0;
+  for (int i = 0; i < 7; i++) { v = nextVolume(v); if (v == 230) seen230++; }
+  TEST_ASSERT_EQUAL(0, v);
+  TEST_ASSERT_EQUAL(1, seen230);
+  TEST_ASSERT_EQUAL(255, nextVolume(230));
+  TEST_ASSERT_EQUAL(0, nextVolume(255));
+  TEST_ASSERT_EQUAL(192, nextVolume(150));  // valeur hors serie : plus proche (160), puis suivante
+  TEST_ASSERT_EQUAL(210, nextBrightness(160));
+  TEST_ASSERT_EQUAL(20, nextBrightness(255));
+  TEST_ASSERT_EQUAL(30, nextPause(10));
+  TEST_ASSERT_EQUAL(0, nextPause(300));
+  TEST_ASSERT_EQUAL(10, nextPause(0));
+  TEST_ASSERT_EQUAL(30, nextPause(12345));
+  TEST_ASSERT_EQUAL(30, sanitizePause(7));
+  TEST_ASSERT_EQUAL(0, sanitizePause(0));
+  TEST_ASSERT_EQUAL(255, sanitizeVolume(999));
+  TEST_ASSERT_EQUAL(0, sanitizeVolume(-4));
+  TEST_ASSERT_EQUAL(5, sanitizeBrightness(0));
+  TEST_ASSERT_TRUE(kDefaultAutoPlay);  // lecture automatique : oui par defaut
+}
+
+void test_formats() {
+  TEST_ASSERT_EQUAL_STRING("Muet", formatVolume(0).c_str());
+  TEST_ASSERT_EQUAL_STRING("100%", formatVolume(255).c_str());
+  TEST_ASSERT_EQUAL_STRING("90%", formatVolume(230).c_str());
+  TEST_ASSERT_EQUAL_STRING("43%", formatBrightness(110).c_str());
+  TEST_ASSERT_EQUAL_STRING("10 s", formatPause(10).c_str());
+  TEST_ASSERT_EQUAL_STRING("1 min", formatPause(60).c_str());
+  TEST_ASSERT_EQUAL_STRING("5 min", formatPause(300).c_str());
+  TEST_ASSERT_EQUAL_STRING("Jamais", formatPause(0).c_str());
+  TEST_ASSERT_EQUAL_STRING("Oui", formatYesNo(true).c_str());
+  TEST_ASSERT_EQUAL_STRING("Non", formatYesNo(false).c_str());
+  TEST_ASSERT_EQUAL_STRING("0", formatBadge(-3).c_str());
+  TEST_ASSERT_EQUAL_STRING("3", formatBadge(3).c_str());
+  TEST_ASSERT_EQUAL_STRING("9", formatBadge(9).c_str());
+  TEST_ASSERT_EQUAL_STRING("9+", formatBadge(10).c_str());
+  TEST_ASSERT_EQUAL_STRING("87%", formatBattery(87).c_str());
+  TEST_ASSERT_EQUAL_STRING("--", formatBattery(-1).c_str());
+}
+
+void test_agent_index() {
+  TEST_ASSERT_EQUAL(1, (int)nextAgentIndex(0, 3));
+  TEST_ASSERT_EQUAL(0, (int)nextAgentIndex(2, 3));
+  TEST_ASSERT_EQUAL(1, (int)nextAgentIndex(9, 3));  // index invalide -> 0 puis suivant
+  TEST_ASSERT_EQUAL(0, (int)nextAgentIndex(0, 0));
+  TEST_ASSERT_EQUAL(0, (int)clampAgentIndex(5, 2));
+  std::vector<AgentState> v(3);
+  v[0].agent = "a"; v[1].agent = "b"; v[2].agent = "c";
+  TEST_ASSERT_EQUAL(2, (int)agentIndexBySlug(v, "c", 0));
+  TEST_ASSERT_EQUAL(0, (int)agentIndexBySlug(v, "zzz", 7));  // absent : repli borne
+}
+
+// ---------- boutons et menu ----------
 void test_main_actions() {
-  TEST_ASSERT_TRUE(mainAction(Button::Top, Press::Click, true) == MainAction::AckLatest);
-  TEST_ASSERT_TRUE(mainAction(Button::Top, Press::Click, false) == MainAction::NextAgent);
-  TEST_ASSERT_TRUE(mainAction(Button::Top, Press::Hold, true) == MainAction::NextAgent);
-  TEST_ASSERT_TRUE(mainAction(Button::Top, Press::DoubleClick, true) == MainAction::None);
-  TEST_ASSERT_TRUE(mainAction(Button::Front, Press::Click, true) == MainAction::Replay);
-  TEST_ASSERT_TRUE(mainAction(Button::Front, Press::Hold, false) == MainAction::Record);
-  TEST_ASSERT_TRUE(mainAction(Button::Front, Press::DoubleClick, false) == MainAction::OpenMenu);
+  // Dessus : plus d'acquittement
+  TEST_ASSERT_TRUE(mainAction(Button::Top, Press::Click) == MainAction::NextAgent);
+  TEST_ASSERT_TRUE(mainAction(Button::Top, Press::Hold) == MainAction::OpenMenu);
+  // Frontal
+  TEST_ASSERT_TRUE(mainAction(Button::Front, Press::Click) == MainAction::PlayVoice);
+  TEST_ASSERT_TRUE(mainAction(Button::Front, Press::Hold) == MainAction::Record);
 }
 
-void test_menu_root() {
+void test_menu_navigation_and_actions() {
   MenuState m;
-  TEST_ASSERT_TRUE(menuStep(m, MenuEvent::TopClick) == MenuAct::VolumeNext);
-  TEST_ASSERT_TRUE(menuStep(m, MenuEvent::FrontClick) == MenuAct::Redraw);
-  TEST_ASSERT_TRUE(menuStep(m, MenuEvent::TopClick) == MenuAct::BrightnessNext);
-  menuStep(m, MenuEvent::FrontClick);
-  TEST_ASSERT_TRUE(menuStep(m, MenuEvent::TopClick) == MenuAct::PauseNext);
-  menuStep(m, MenuEvent::FrontClick);
-  TEST_ASSERT_TRUE(menuStep(m, MenuEvent::TopClick) == MenuAct::WifiConfig);
-  menuStep(m, MenuEvent::FrontClick);
-  TEST_ASSERT_TRUE(menuStep(m, MenuEvent::TopClick) == MenuAct::AskReset);
-  TEST_ASSERT_TRUE(menuStep(m, MenuEvent::TopHold) == MenuAct::None);  // jamais de reset direct
-  menuStep(m, MenuEvent::FrontClick);
-  TEST_ASSERT_TRUE(menuStep(m, MenuEvent::TopClick) == MenuAct::Close);
-  menuStep(m, MenuEvent::FrontClick);  // boucle
-  TEST_ASSERT_EQUAL(0, (int)m.cursor);
-  TEST_ASSERT_EQUAL(6, (int)kMenuRootRows);
-  TEST_ASSERT_TRUE(menuStep(m, MenuEvent::FrontHold) == MenuAct::Close);
+  TEST_ASSERT_EQUAL(7, (int)kMenuRows);
+  // frontal clic = agir sur l'element courant ; dessus clic = element suivant
+  const MenuAct expect[] = {MenuAct::VolNotifNext, MenuAct::VolVoiceNext, MenuAct::BrightnessNext, MenuAct::PauseNext,
+                            MenuAct::AutoPlayToggle, MenuAct::WifiConfig, MenuAct::AskReset};
+  for (size_t i = 0; i < kMenuRows; i++) {
+    TEST_ASSERT_EQUAL((int)i, (int)m.cursor);
+    TEST_ASSERT_TRUE(menuStep(m, MenuEvent::FrontClick) == expect[i]);
+    TEST_ASSERT_EQUAL((int)i, (int)m.cursor);  // agir ne deplace pas le curseur
+    TEST_ASSERT_TRUE(menuStep(m, MenuEvent::TopClick) == MenuAct::Redraw);
+  }
+  TEST_ASSERT_EQUAL(0, (int)m.cursor);  // boucle
+  TEST_ASSERT_TRUE(menuStep(m, MenuEvent::TopHold) == MenuAct::Close);   // appui long dessus : quitter
+  TEST_ASSERT_TRUE(menuStep(m, MenuEvent::FrontHold) == MenuAct::None);
   TEST_ASSERT_TRUE(menuStep(m, MenuEvent::Idle) == MenuAct::Close);
-  TEST_ASSERT_TRUE(menuStep(m, MenuEvent::TopHold) == MenuAct::None);
-}
-
-static AgentState mkAgent(const char *slug, const char *status, bool stale = false) {
-  AgentState a; a.agent = slug; a.name = slug; a.status = status; a.stale = stale;
-  return a;
-}
-
-void test_scene_styles() {
-  std::vector<AgentState> st = {mkAgent("a", "working"), mkAgent("b", "idle"), mkAgent("c", "done"),
-                                mkAgent("d", "waiting"), mkAgent("e", "working", true)};
-  Scene s = buildScene(st, 2);
-  TEST_ASSERT_EQUAL(5, (int)s.agents.size());
-  TEST_ASSERT_EQUAL(0, s.more);
-  TEST_ASSERT_FALSE(s.calm);
-  TEST_ASSERT_TRUE(s.agents[0].animated && s.agents[0].icon == Icon::Working && s.agents[0].color == 0x07FF);
-  TEST_ASSERT_TRUE(!s.agents[1].animated && s.agents[1].icon == Icon::Idle);
-  TEST_ASSERT_TRUE(!s.agents[2].animated && s.agents[2].icon == Icon::Done);
-  TEST_ASSERT_TRUE(!s.agents[3].animated && s.agents[3].icon == Icon::Waiting);
-  TEST_ASSERT_TRUE(!s.agents[4].animated && s.agents[4].icon == Icon::Stale);  // perime : pas anime
-  TEST_ASSERT_TRUE(s.agents[2].selected && !s.agents[0].selected);
-}
-
-void test_scene_calm_and_empty() {
-  Scene e = buildScene({}, 0);
-  TEST_ASSERT_TRUE(e.agents.empty() && e.calm && e.more == 0);
-  Scene c = buildScene({mkAgent("a", "idle"), mkAgent("b", "done")}, 0);
-  TEST_ASSERT_TRUE(c.calm);
-}
-
-void test_scene_grouping() {
-  std::vector<AgentState> st;
-  for (int i = 0; i < 9; i++) st.push_back(mkAgent(("a" + std::to_string(i)).c_str(), "idle"));
-  Scene s = buildScene(st, 0);
-  TEST_ASSERT_EQUAL(5, (int)s.agents.size());  // 5 emplacements + "+4"
-  TEST_ASSERT_EQUAL(4, s.more);
-  TEST_ASSERT_TRUE(s.agents[0].selected);
-  s = buildScene(st, 8);  // selection hors fenetre : la fenetre glisse
-  TEST_ASSERT_EQUAL(5, (int)s.agents.size());
-  TEST_ASSERT_EQUAL(4, s.more);
-  TEST_ASSERT_TRUE(s.agents[4].selected);
-  std::vector<AgentState> six(st.begin(), st.begin() + 6);
-  s = buildScene(six, 0);
-  TEST_ASSERT_EQUAL(6, (int)s.agents.size());  // 6 tiennent : pas de "+N"
-  TEST_ASSERT_EQUAL(0, s.more);
-  // un agent qui travaille cache derriere "+N" empeche quand meme la scene d'etre calme
-  st[8].status = "working";
-  s = buildScene(st, 0);
-  TEST_ASSERT_FALSE(s.calm);
-}
-
-void test_scene_breath_range() {
-  int mn = 9, mx = -9;
-  for (uint32_t f = 0; f < 200; f++) { int b = sceneBreath(f); if (b < mn) mn = b; if (b > mx) mx = b; }
-  TEST_ASSERT_EQUAL(-2, mn);
-  TEST_ASSERT_EQUAL(2, mx);
-  TEST_ASSERT_EQUAL(sceneBreath(5), sceneBreath(53));
-}
-
-void test_notif_layout_budget() {
-  TEST_ASSERT_EQUAL(0, notifLayout(0).shown);
-  for (int n = 1; n <= 6; n++) {
-    NotifLayout l = notifLayout(n);
-    TEST_ASSERT_EQUAL(n > 3 ? 3 : n, l.shown);
-    TEST_ASSERT_TRUE(l.lineH >= 25 && l.lineH <= 40);
-    TEST_ASSERT_EQUAL(l.shown * l.lineH, l.summaryY);
-    // lignes + resume tiennent au-dessus du separateur (kStatusY - 1) : ni debordement ni chevauchement
-    TEST_ASSERT_TRUE(l.summaryY + kSummaryH <= kStatusY - 1);
-  }
-  TEST_ASSERT_EQUAL(28, notifLayout(3).lineH);
-  TEST_ASSERT_EQUAL(40, notifLayout(1).lineH);
-  TEST_ASSERT_EQUAL(kScreenH, kStatusY + kStatusH);
-}
-
-void test_icon_row_layout() {
-  TEST_ASSERT_EQUAL(24, iconRowLayout(1).r);
-  TEST_ASSERT_EQUAL(24, iconRowLayout(4).r);
-  int prev = 99;
-  for (int slots = 1; slots <= 6; slots++) {
-    IconRow g = iconRowLayout(slots);
-    TEST_ASSERT_TRUE(g.r <= prev);  // plus d'agents : icones plus petites
-    prev = g.r;
-    TEST_ASSERT_TRUE(2 * g.r + 6 <= g.slotW);  // pas de chevauchement horizontal
-    TEST_ASSERT_TRUE(g.cy - g.r - 2 >= 0);     // rebond en haut
-    TEST_ASSERT_TRUE(g.nameCy - kNameH / 2 > g.cy + g.r + 6);  // nom sous le soulignement
-    TEST_ASSERT_TRUE(g.nameCy + kNameH / 2 <= kStatusY - 1);   // nom au-dessus du separateur
-  }
-  TEST_ASSERT_EQUAL(21, iconRowLayout(5).r);
-  TEST_ASSERT_EQUAL(17, iconRowLayout(6).r);
-  TEST_ASSERT_TRUE(iconRowLayout(0).r == 24);  // robuste
-}
-
-void test_summary() {
-  Summary a = buildSummary(3, 0, 0);
-  TEST_ASSERT_EQUAL_STRING("3", a.pending.c_str());
-  TEST_ASSERT_FALSE(a.showWorking);  // aucun agent suivi : pas d'engrenage
-  Summary c = buildSummary(3, 0, 5);
-  TEST_ASSERT_TRUE(c.showWorking);
-  TEST_ASSERT_FALSE(c.anyWorking);
-  TEST_ASSERT_EQUAL_STRING("0/5", c.working.c_str());
-  Summary b = buildSummary(120, 2, 5);
-  TEST_ASSERT_EQUAL_STRING("99+", b.pending.c_str());
-  TEST_ASSERT_TRUE(b.showWorking);
-  TEST_ASSERT_TRUE(b.anyWorking);
-  TEST_ASSERT_EQUAL_STRING("2/5", b.working.c_str());
+  // plus de selection des agents visibles ni d'entree "Sortir"
+  for (size_t i = 0; i < kMenuRows; i++) TEST_ASSERT_TRUE(strlen(menuLabel((MenuItem)i)) > 0);
 }
 
 void test_menu_scroll_and_reset_hold() {
@@ -1074,11 +753,196 @@ void test_menu_scroll_and_reset_hold() {
   TEST_ASSERT_EQUAL(0, resetSecondsLeft(3000));
   TEST_ASSERT_FALSE(resetConfirmed(2999));
   TEST_ASSERT_TRUE(resetConfirmed(3000));
-  // l'entree Reinitialiser n'ouvre jamais la confirmation par un simple defilement
+  // l'entree Reinitialiser n'ouvre la confirmation qu'au clic frontal, jamais par simple defilement
   MenuState m;
-  for (int i = 0; i < 4; i++) menuStep(m, MenuEvent::FrontClick);
+  for (int i = 0; i < 6; i++) TEST_ASSERT_TRUE(menuStep(m, MenuEvent::TopClick) == MenuAct::Redraw);
   TEST_ASSERT_TRUE(m.item() == MenuItem::Reset);
-  TEST_ASSERT_TRUE(menuStep(m, MenuEvent::FrontClick) == MenuAct::Redraw);
+}
+
+// ---------- icones, auto-selection, pastilles ----------
+static AgentState mkAgent(const char *slug, const char *status, int voices = 0, bool stale = false) {
+  AgentState a; a.agent = slug; a.name = slug; a.status = status; a.stale = stale; a.voicePending = voices;
+  return a;
+}
+
+void test_mood_from_status() {
+  TEST_ASSERT_TRUE(moodFromStatus("idle", false) == Mood::Ready);
+  TEST_ASSERT_TRUE(moodFromStatus("done", false) == Mood::Ready);
+  TEST_ASSERT_TRUE(moodFromStatus("error", false) == Mood::Problem);
+  TEST_ASSERT_TRUE(moodFromStatus("waiting", false) == Mood::Question);
+  TEST_ASSERT_TRUE(moodFromStatus("working", false) == Mood::Thinking);
+  TEST_ASSERT_TRUE(moodFromStatus("???", false) == Mood::Unknown);
+  TEST_ASSERT_TRUE(moodFromStatus("done", true) == Mood::Unknown);  // perime
+  TEST_ASSERT_NOT_EQUAL(moodColor(Mood::Ready), moodColor(Mood::Problem));
+  TEST_ASSERT_TRUE(moodRank(Mood::Question) > moodRank(Mood::Problem));
+  TEST_ASSERT_TRUE(moodRank(Mood::Problem) > moodRank(Mood::Ready));
+  TEST_ASSERT_TRUE(kRankVoice > moodRank(Mood::Question));
+  TEST_ASSERT_EQUAL(0, moodRank(Mood::Thinking));
+}
+
+void test_diff_status_change_selects() {
+  std::vector<PrevAgent> prev = {{"a", "idle", {}}, {"b", "working", {}}, {"c", "working", {}}};
+  // changement de statut -> selection de l'agent
+  SyncDiff d = diffStates(prev, {mkAgent("a", "idle"), mkAgent("b", "done"), mkAgent("c", "working")});
+  TEST_ASSERT_TRUE(d.changed);
+  TEST_ASSERT_EQUAL_STRING("b", d.pick.c_str());
+  // passage a "reflexion" : ni changement ni selection
+  d = diffStates(prev, {mkAgent("a", "working"), mkAgent("b", "working"), mkAgent("c", "working")});
+  TEST_ASSERT_FALSE(d.changed);
+  TEST_ASSERT_EQUAL_STRING("", d.pick.c_str());
+  // idle -> done : meme icone, pas de changement
+  d = diffStates(prev, {mkAgent("a", "done"), mkAgent("b", "working"), mkAgent("c", "working")});
+  TEST_ASSERT_FALSE(d.changed);
+  // statut inchange
+  d = diffStates(prev, {mkAgent("a", "idle"), mkAgent("b", "working")});
+  TEST_ASSERT_FALSE(d.changed);
+  // premiere apparition / agent inconnu du cache : rien
+  d = diffStates(prev, {mkAgent("z", "error")});
+  TEST_ASSERT_FALSE(d.changed);
+  d = diffStates({{"a", "", {}}}, {mkAgent("a", "error")});
+  TEST_ASSERT_FALSE(d.changed);
+  // perime : rien
+  d = diffStates(prev, {mkAgent("b", "error", 0, true)});
+  TEST_ASSERT_FALSE(d.changed);
+}
+
+void test_diff_priority_order() {
+  // simultanes : vocal > question > probleme > pret
+  std::vector<PrevAgent> prev = {{"ready", "working", {}}, {"prob", "working", {}}, {"ques", "working", {}},
+                                 {"voice", "idle", {}}};
+  std::vector<AgentState> st = {mkAgent("voice", "idle"), mkAgent("ready", "done"), mkAgent("prob", "error"),
+                                mkAgent("ques", "waiting")};
+  SyncDiff d = diffStates(prev, st);
+  TEST_ASSERT_EQUAL_STRING("ques", d.pick.c_str());
+  st[2] = mkAgent("prob", "working");  // plus de question non plus ? ques reste ; retirons-la
+  st[3] = mkAgent("ques", "working");
+  d = diffStates(prev, st);
+  TEST_ASSERT_EQUAL_STRING("ready", d.pick.c_str());
+  st[2] = mkAgent("prob", "error");
+  d = diffStates(prev, st);
+  TEST_ASSERT_EQUAL_STRING("prob", d.pick.c_str());  // probleme > pret
+  st[0].voiceClips = {"c_1"};
+  st[0].voicePending = 1;
+  st[3] = mkAgent("ques", "waiting");
+  d = diffStates(prev, st);
+  TEST_ASSERT_EQUAL_STRING("voice", d.pick.c_str());  // vocal > tout
+  TEST_ASSERT_EQUAL(kRankVoice, d.pickRank);
+  // a rang egal : le dernier de la liste
+  std::vector<PrevAgent> p2 = {{"x", "working", {}}, {"y", "working", {}}};
+  d = diffStates(p2, {mkAgent("x", "waiting"), mkAgent("y", "waiting")});
+  TEST_ASSERT_EQUAL_STRING("y", d.pick.c_str());
+}
+
+void test_diff_voice_arrivals() {
+  PrevAgent a{"a", "idle", {}};
+  AgentState s = mkAgent("a", "idle", 2);
+  s.voiceClips = {"c_old", "c_new"};
+  updateSeen(a.seen, {"c_old"});  // c_old deja vu
+  SyncDiff d = diffStates({a}, {s});
+  TEST_ASSERT_TRUE(d.changed);
+  TEST_ASSERT_EQUAL_STRING("a", d.pick.c_str());
+  TEST_ASSERT_EQUAL(1, (int)d.arrivals.size());
+  TEST_ASSERT_EQUAL(1, (int)d.arrivals[0].clips.size());
+  TEST_ASSERT_EQUAL_STRING("c_new", d.arrivals[0].clips[0].c_str());
+  // un clip lu ailleurs puis un reste en attente n'est pas une arrivee (memoire des clips vus)
+  updateSeen(a.seen, {"c_new"});
+  s.voiceClips = {"c_old"}; s.voicePending = 1;
+  d = diffStates({a}, {s});
+  TEST_ASSERT_FALSE(d.changed);
+  TEST_ASSERT_TRUE(d.arrivals.empty());
+  // ordre conserve : du plus ancien au plus recent
+  s.voiceClips = {"c_1", "c_2", "c_3"};
+  d = diffStates({PrevAgent{"a", "idle", {}}}, {s});
+  TEST_ASSERT_EQUAL(3, (int)d.arrivals[0].clips.size());
+  TEST_ASSERT_EQUAL_STRING("c_1", d.arrivals[0].clips[0].c_str());
+  TEST_ASSERT_EQUAL_STRING("c_3", d.arrivals[0].clips[2].c_str());
+  // agent inconnu du cache : pastille seulement, pas d'arrivee
+  d = diffStates({}, {s});
+  TEST_ASSERT_FALSE(d.changed);
+}
+
+void test_seen_memory_bounded() {
+  std::vector<uint16_t> seen;
+  std::vector<std::string> ids;
+  for (int i = 0; i < 20; i++) ids.push_back("c_" + std::to_string(i));
+  updateSeen(seen, ids);
+  TEST_ASSERT_EQUAL((int)kSeenMax, (int)seen.size());
+  TEST_ASSERT_TRUE(std::find(seen.begin(), seen.end(), clipHash("c_19")) != seen.end());
+  updateSeen(seen, {"c_19"});  // doublon : pas de croissance
+  TEST_ASSERT_EQUAL((int)kSeenMax, (int)seen.size());
+  TEST_ASSERT_NOT_EQUAL(clipHash("c_1"), clipHash("c_2"));
+}
+
+void test_agent_row() {
+  std::vector<AgentState> st = {mkAgent("a", "working"), mkAgent("b", "idle", 3), mkAgent("c", "done"),
+                                mkAgent("d", "waiting"), mkAgent("e", "error"), mkAgent("f", "done", 0, true)};
+  AgentRow r = buildAgentRow(st, 1);
+  TEST_ASSERT_EQUAL(6, (int)r.cells.size());
+  TEST_ASSERT_EQUAL(0, r.more);
+  TEST_ASSERT_TRUE(r.thinking);
+  TEST_ASSERT_TRUE(r.cells[0].mood == Mood::Thinking);
+  TEST_ASSERT_TRUE(r.cells[1].mood == Mood::Ready && r.cells[1].selected && r.cells[1].voices == 3);
+  TEST_ASSERT_TRUE(r.cells[3].mood == Mood::Question);
+  TEST_ASSERT_TRUE(r.cells[4].mood == Mood::Problem);
+  TEST_ASSERT_TRUE(r.cells[5].mood == Mood::Unknown);  // perime
+  TEST_ASSERT_FALSE(r.cells[0].selected);
+  TEST_ASSERT_FALSE(buildAgentRow({mkAgent("a", "idle")}, 0).thinking);
+  AgentRow e = buildAgentRow({}, 0);
+  TEST_ASSERT_TRUE(e.cells.empty() && e.more == 0);
+}
+
+void test_agent_row_window() {
+  std::vector<AgentState> st;
+  for (int i = 0; i < 9; i++) st.push_back(mkAgent(("a" + std::to_string(i)).c_str(), "idle"));
+  AgentRow r = buildAgentRow(st, 0);
+  TEST_ASSERT_EQUAL(5, (int)r.cells.size());  // 5 emplacements + "+4"
+  TEST_ASSERT_EQUAL(4, r.more);
+  TEST_ASSERT_TRUE(r.cells[0].selected);
+  r = buildAgentRow(st, 8);  // selection hors fenetre : la fenetre glisse
+  TEST_ASSERT_EQUAL(5, (int)r.cells.size());
+  TEST_ASSERT_TRUE(r.cells[4].selected);
+  // un agent qui reflechit derriere "+N" anime quand meme
+  st[8].status = "working";
+  TEST_ASSERT_TRUE(buildAgentRow(st, 0).thinking);
+}
+
+void test_agent_row_layout_and_breath() {
+  TEST_ASSERT_EQUAL(24, agentRowLayout(1).r);
+  TEST_ASSERT_EQUAL(24, agentRowLayout(4).r);
+  TEST_ASSERT_EQUAL(21, agentRowLayout(5).r);
+  TEST_ASSERT_EQUAL(17, agentRowLayout(6).r);
+  TEST_ASSERT_EQUAL(24, agentRowLayout(0).r);  // robuste
+  int prev = 99;
+  for (int slots = 1; slots <= 6; slots++) {
+    AgentRowLayout g = agentRowLayout(slots);
+    TEST_ASSERT_TRUE(g.r <= prev);
+    prev = g.r;
+    TEST_ASSERT_TRUE(2 * g.r + 6 <= g.slotW);               // pas de chevauchement horizontal
+    TEST_ASSERT_TRUE(g.cy - g.r - 2 >= 0);                  // rebond en haut
+    TEST_ASSERT_TRUE(g.cy + g.r + 6 <= kAgentsH);           // soulignement dans la zone d'agents
+  }
+  TEST_ASSERT_TRUE(kAgentsH < kNameCy - 12 + 1);            // la ligne de nom (police 24) ne chevauche pas les icones
+  TEST_ASSERT_TRUE(kNameCy + 12 <= kStatusY - 1);           // ... ni la barre de statut
+  TEST_ASSERT_EQUAL(kScreenH, kStatusY + kStatusH);
+  int mn = 9, mx = -9;
+  for (uint32_t f = 0; f < 200; f++) { int b = calmBreath(f); mn = std::min(mn, b); mx = std::max(mx, b); }
+  TEST_ASSERT_EQUAL(-2, mn);
+  TEST_ASSERT_EQUAL(2, mx);
+}
+
+void test_conn_report_sound() {
+  uint8_t f = 0;
+  TEST_ASSERT_FALSE(connReportSound(f, true, false));
+  TEST_ASSERT_FALSE(connReportSound(f, false, false));  // 1er echec, ecran eteint : silencieux
+  TEST_ASSERT_EQUAL(1, f);
+  TEST_ASSERT_TRUE(connReportSound(f, false, false));   // 2e echec consecutif : son meme ecran eteint
+  TEST_ASSERT_FALSE(connReportSound(f, false, false));  // 3e : plus de sonnerie a chaque reveil
+  TEST_ASSERT_FALSE(connReportSound(f, true, false));
+  TEST_ASSERT_EQUAL(0, f);
+  TEST_ASSERT_TRUE(connReportSound(f, false, true));    // ecran allume : son des le 1er echec
+  f = 250;
+  connReportSound(f, false, false);
+  TEST_ASSERT_EQUAL(250, f);
 }
 
 int main(int, char **) {
@@ -1099,9 +963,6 @@ int main(int, char **) {
   RUN_TEST(test_bodies);
   RUN_TEST(test_phase_machine);
   RUN_TEST(test_ack);
-  RUN_TEST(test_screen_events);
-  RUN_TEST(test_screen_ignores_filters);
-  RUN_TEST(test_screen_state_change);
   RUN_TEST(test_order_states);
   RUN_TEST(test_all_config_agents_displayed);
   RUN_TEST(test_truncate);
@@ -1115,7 +976,6 @@ int main(int, char **) {
   RUN_TEST(test_server_pcm_fixtures);
   RUN_TEST(test_server_ima_adpcm_fixtures);
   RUN_TEST(test_server_ima_without_fact_pads_last_block);
-  RUN_TEST(test_status_icon);
   RUN_TEST(test_nudge_type_parse);
   RUN_TEST(test_nudge_type_in_sync);
   RUN_TEST(test_sound_durations_and_notes);
@@ -1124,29 +984,22 @@ int main(int, char **) {
   RUN_TEST(test_sound_error_is_low_and_distinct);
   RUN_TEST(test_sound_priority_order);
   RUN_TEST(test_sound_scheduler_rules);
-  RUN_TEST(test_notif_push_merge_order);
-  RUN_TEST(test_notif_ack_and_capacity);
-  RUN_TEST(test_notif_restore_roundtrip);
-  RUN_TEST(test_sys_replace_and_merge);
-  RUN_TEST(test_sys_isolated_from_agents);
-  RUN_TEST(test_sys_expire);
-  RUN_TEST(test_conn_report);
-  RUN_TEST(test_sys_not_persisted_semantics);
-  RUN_TEST(test_pick_alert);
-  RUN_TEST(test_settings_cycles);
-  RUN_TEST(test_formats);
-  RUN_TEST(test_activity_and_agent_index);
   RUN_TEST(test_agent_label);
   RUN_TEST(test_battery_style);
+  RUN_TEST(test_settings_cycles);
+  RUN_TEST(test_formats);
+  RUN_TEST(test_agent_index);
   RUN_TEST(test_main_actions);
-  RUN_TEST(test_menu_root);
-  RUN_TEST(test_scene_styles);
-  RUN_TEST(test_scene_calm_and_empty);
-  RUN_TEST(test_scene_grouping);
-  RUN_TEST(test_scene_breath_range);
-  RUN_TEST(test_notif_layout_budget);
-  RUN_TEST(test_icon_row_layout);
-  RUN_TEST(test_summary);
+  RUN_TEST(test_menu_navigation_and_actions);
   RUN_TEST(test_menu_scroll_and_reset_hold);
+  RUN_TEST(test_mood_from_status);
+  RUN_TEST(test_diff_status_change_selects);
+  RUN_TEST(test_diff_priority_order);
+  RUN_TEST(test_diff_voice_arrivals);
+  RUN_TEST(test_seen_memory_bounded);
+  RUN_TEST(test_agent_row);
+  RUN_TEST(test_agent_row_window);
+  RUN_TEST(test_agent_row_layout_and_breath);
+  RUN_TEST(test_conn_report_sound);
   return UNITY_END();
 }
