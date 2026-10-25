@@ -1,7 +1,6 @@
 #include "ui.h"
 
 #include <M5Unified.h>
-#include <driver/ledc.h>
 
 #include "san_logic.h"
 #include "san_sound.h"
@@ -15,9 +14,6 @@ static const lgfx::IFont *kFont24 = &fonts::lgfxJapanGothic_24;  // accents lati
 static const lgfx::IFont *kFont20 = &fonts::lgfxJapanGothic_20;
 static const lgfx::IFont *kFont40 = &fonts::lgfxJapanGothic_40;
 
-static const int kBacklightLedcChannel = 7;  // _set_pwm_backlight(GPIO_NUM_38, 7, 256, ...) dans M5GFX.cpp
-static const uint32_t kBacklightPwmHz = 25000;
-
 static const uint16_t kSelBg = 0x39E7;
 static const uint16_t kVoiceBg = 0x041F;  // bleu : message vocal
 
@@ -30,18 +26,7 @@ static uint16_t dim(uint16_t c) {
   return (uint16_t)((((c >> 11) & 31) >> 2) << 11 | (((c >> 5) & 63) >> 2) << 5 | ((c & 31) >> 2));
 }
 
-// M5GFX pilote le rétroéclairage du StickS3 (GPIO38, LEDC canal 7 = timer 3, 9 bits) a 256 Hz : le
-// decoupage est audible (sifflement). On remonte la frequence du timer a 25 kHz (resolution 9 bits conservee :
-// 80 MHz / 25 kHz = 3200 >= 512). Le rapport cyclique n'est pas modifie par ledc_set_freq.
-static void silenceBacklightPwm() {
-  const ledc_mode_t mode = LEDC_LOW_SPEED_MODE;
-  const ledc_timer_t timer = (ledc_timer_t)((kBacklightLedcChannel / 2) % 4);
-  esp_err_t e = ledc_set_freq(mode, timer, kBacklightPwmHz);
-  Serial.printf("[san] backlight pwm: set_freq=%d, freq=%u Hz\n", (int)e, (unsigned)ledc_get_freq(mode, timer));
-}
-
 void begin() {
-  silenceBacklightPwm();
   M5.Display.setRotation(1);  // paysage 240x135, USB-C en bas ; bouton lateral en haut, bouton frontal a droite
   M5.Display.setFont(kFont24);
   M5.Display.setTextSize(1);
@@ -51,7 +36,7 @@ void setBrightness(int b) {
   gBrightness = b;
   M5.Display.setBrightness(b);
 }
-void backlightOn() { M5.Display.wakeup(); silenceBacklightPwm(); M5.Display.setBrightness(gBrightness); }
+void backlightOn() { M5.Display.wakeup(); M5.Display.setBrightness(gBrightness); }
 void backlightOff() { M5.Display.setBrightness(0); M5.Display.sleep(); }
 
 // ---------------------------------------------------------------- pictogrammes

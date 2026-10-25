@@ -52,23 +52,6 @@ l'ouverture/fermeture de l'ampli ; (c) premier son après repos (ouverture codec
 toujours correct après un son ; (e) un son déclenché pendant un appel HTTP bloquant garde l'ampli allumé jusqu'au retour
 à la boucle (aucun `housekeeping()` dans `esp_http_client`). Non vérifié sur carte : l'effet réel du power-down I2C.
 
-## Sifflement carte éveillée : PWM du rétroéclairage
-
-Cause : M5GFX pilote le rétroéclairage du StickS3 en PWM LEDC sur GPIO38 (`M5GFX.cpp`, `_set_pwm_backlight(GPIO_NUM_38, 7, 256, false, 16)` :
-canal 7 = timer 3, **256 Hz**, offset 16 ; `Light_PWM.inl` impose 9 bits). Un découpage à 256 Hz du driver de rétroéclairage
-(bobine/condensateurs) est audible ; il disparaît en veille profonde car le PWM s'arrête. Le PMIC M5PM1 ne gère que
-l'alimentation de l'écran (GPIO2), pas la luminosité.
-
-Solution : `ui::begin()` (et `backlightOn()`) appelle `ledc_set_freq(LOW_SPEED, timer 3, 25 kHz)` après `M5.begin`. La résolution
-9 bits est conservée (80 MHz / 25 kHz = 3200 >= 512), le rapport cyclique n'est pas touché : `setBrightness` (7 niveaux) et
-`backlightOff/On` (duty 0 + sleep écran, deep sleep) restent inchangés. Le log série affiche `[san] backlight pwm: set_freq=0, freq=... Hz`.
-Aucune modification de la lib. Cette fréquence réelle est lue par `ledc_get_freq` (le diviseur peut l'arrondir légèrement).
-
-À valider sur carte : (a) sifflement disparu écran allumé à chaque niveau de luminosité ; (b) aucun scintillement ni
-changement de luminosité perçu (le driver de rétroéclairage doit supporter 25 kHz) ; (c) consommation écran allumé
-inchangée (pertes de commutation légèrement plus élevées possibles) ; (d) réveil depuis veille profonde correct.
-Repli si le driver n'aime pas 25 kHz : essayer 20-30 kHz, sinon luminosité fixe 100 % (pas de PWM).
-
 ## Configuration PlatformIO retenue
 
 Reprise de la doc M5Stack : `platform = espressif32@6.12.0` (Arduino-ESP32 2.0.17), `board = esp32-s3-devkitc-1`,
