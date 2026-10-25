@@ -91,3 +91,5 @@ Retours d'usage intégrés : écran en paysage (rotation 1, bouton latéral B su
 que texte, sons distincts par type de nudge (`start`, `notification`, `question`, `done`, `error`), animation de
 calcul sans pourcentage. À valider à l'usage : les 4 autres types de nudge (rendu et sons), le volume 230 sur
 batterie (risque de redémarrage), la fluidité de l'animation.
+
+À valider sur la carte : lignes de connexion « Wi-Fi... » / « Serveur... » (pulsation, lisibilité), « Wi-Fi OK » après un échec, son d'erreur au 2e échec consécutif réveil timer hors couverture.

@@ -11,7 +11,8 @@ namespace net {
 
 // Lance l'association sans attendre (ex. pendant un enregistrement) ; wifiConnect la reprend sans la relancer.
 void wifiBegin(const Settings &s);
-bool wifiConnect(const Settings &s, uint32_t timeoutMs);
+// tick (facultatif) : appele toutes les ~50 ms pendant l'attente (animation).
+bool wifiConnect(const Settings &s, uint32_t timeoutMs, void (*tick)() = nullptr);
 void wifiOff();
 std::string currentSsid();
 // TLS valide les dates des certificats : synchronise l'heure par SNTP si elle est invalide.

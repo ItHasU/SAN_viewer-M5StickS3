@@ -269,6 +269,7 @@ static void iconBack(int cx, int cy, int r, uint16_t fg) {
 }
 
 static void iconNudge(san::NudgeIcon ic, int cx, int cy, int r, uint16_t fg);
+static void iconServer(int cx, int cy, int r, uint16_t fg, bool ok);
 
 // ---------------------------------------------------------------- vue principale
 static M5Canvas gCv(&M5.Display);
@@ -292,7 +293,14 @@ static void drawMain(const MainView &v, uint32_t frame) {
       uint16_t bg = n.voice ? dim(kVoiceBg) : (n.high ? ns.color : dim(ns.color));
       uint16_t fg = n.voice ? TFT_WHITE : (n.high ? ((n.type == san::NudgeType::Notification || n.type == san::NudgeType::Done) ? TFT_BLACK : TFT_WHITE) : ns.accent);
       d.fillRect(0, y, W, lineH - 1, bg);
-      if (n.voice) iconSpeaker(16, cy, 10, fg, true);
+      if (n.sys != san::Sys::None) {  // etat de connexion : icone Wi-Fi / serveur (pulse en cours, barre/croix en echec)
+        if (n.busy) {
+          uint16_t pf = (frame / 5) % 2 ? dim(TFT_CYAN) : TFT_CYAN;  // pulsation ~1 Hz
+          if (n.sys == san::Sys::Wifi) iconWifi(16, cy, 10, pf); else iconServer(16, cy, 8, pf, true);
+        } else if (n.type == san::NudgeType::Done) iconCheck(16, cy, 10, fg);
+        else if (n.sys == san::Sys::Wifi) iconWifi(16, cy, 10, TFT_WHITE, true);
+        else iconServer(16, cy, 8, TFT_WHITE, false);
+      } else if (n.voice) iconSpeaker(16, cy, 10, fg, true);
       else iconNudge(ns.icon, 16, cy, 10, fg);
       textStyle(kFont24, TFT_WHITE, bg);
       d.setCursor(34, y);
@@ -381,7 +389,9 @@ static void presentMain(const MainView &v) {
 void mainView(const MainView &v) {
   gLast = v;
   gHaveLast = true;
-  gAnim = v.activity.working > 0 || (v.notifs.empty() && v.hasSelected && v.selStatus == "working" && !v.selStale);
+  bool busy = false;
+  for (auto &n : v.notifs) busy = busy || n.busy;
+  gAnim = busy || v.activity.working > 0 || (v.notifs.empty() && v.hasSelected && v.selStatus == "working" && !v.selStale);
   presentMain(v);
 }
 

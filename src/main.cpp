@@ -71,8 +71,17 @@ static void readBattery() {
 static ui::MainView buildView() {
   ui::MainView v;
   for (auto &n : G.notifs.latest(cfg::kNotifLines)) {
-    const AgentCfg *a = G.cfg.find(n.agent);
     ui::NotifLine l;
+    if (n.sys != Sys::None) {  // etat de connexion local : jamais un agent
+      l.name = sysName(n.sys);
+      if (n.busy) l.name += "...";
+      else if (n.type == NudgeType::Done) l.name += " OK";
+      l.type = n.busy ? NudgeType::Start : n.type;
+      l.sys = n.sys; l.busy = n.busy; l.count = n.count;
+      v.notifs.push_back(l);
+      continue;
+    }
+    const AgentCfg *a = G.cfg.find(n.agent);
     l.name = a ? a->name : n.agent;
     l.type = n.type; l.voice = n.voice; l.high = n.high; l.count = n.count;
     v.notifs.push_back(l);
@@ -98,10 +107,34 @@ static ui::MainView buildView() {
 }
 static void redraw() { ui::mainView(buildView()); G.dirty = false; }
 
+// ---- etat de connexion : notifications locales (jamais d'ecran plein) ----
+enum class Mode { Main, MenuRoot, MenuAgents };
+static Mode gMode = Mode::Main;  // ecran courant pendant l'eveil
+// La vue principale peut etre redessinee sans ecraser un autre ecran (menu, code d'appairage).
+static bool mainVisible() { return G.screenOn && gMode == Mode::Main && G.phase != Phase::Pairing; }
+static void sysShow() { if (mainVisible()) redraw(); else G.dirty = true; }
+static void sysConnecting(Sys s) {
+  if (!G.screenOn) return;  // reveil timer ecran eteint : rien a montrer
+  G.notifs.setSystem(s, SysState::Connecting, millis());
+  sysShow();
+}
+// Fin d'une tentative : remplace la ligne "en cours" par erreur / "OK" (si echec precedent) / rien.
+static void sysResult(Sys s, bool ok) {
+  uint8_t &fails = s == Sys::Wifi ? rtc.wifiFails : rtc.serverFails;
+  ConnOutcome o = connReport(fails, ok, G.screenOn);
+  if (o.show) G.notifs.setSystem(s, o.state, millis());
+  else G.notifs.clearSystem(s);
+  if (o.sound) audio_io::soundStart(NudgeType::Error, false);  // non bloquant
+  sysShow();
+}
+static void sysTick() { if (mainVisible()) ui::mainTick(); }
+
 // ---------------- reseau / API ----------------
 static bool ensureOnline() {
   if (G.online && WiFi.status() == WL_CONNECTED) return true;
-  G.online = net::wifiConnect(S, cfg::kWifiTimeoutMs);
+  sysConnecting(Sys::Wifi);
+  G.online = net::wifiConnect(S, cfg::kWifiTimeoutMs, sysTick);
+  sysResult(Sys::Wifi, G.online);
   if (G.online) {
     G.base = chooseBase(S.serverUrl.c_str(), S.lanUrl.c_str(), net::currentSsid(), S.homeSsid.c_str());
     if (G.base.rfind("https://", 0) == 0) net::ensureTime();
@@ -233,7 +266,7 @@ static bool doRegister() {
   if (!r.ok()) {
     ApiError e;
     std::string m = parseApiError(r.text(), e) ? e.message : ("HTTP " + std::to_string(r.code));
-    if (G.screenOn) ui::message("Enregistrement", m, TFT_RED);
+    if (G.screenOn && r.code > 0) ui::message("Enregistrement", m, TFT_RED);  // erreur applicative ; transport : notification Serveur
     return false;
   }
   RegisterResponse rr;
@@ -325,10 +358,9 @@ static bool runPhases() {
 static bool syncNow(bool verbose) {
   bool ok = false;
   if (ensureOnline()) {
+    if (verbose) sysConnecting(Sys::Server);
     ok = runPhases();
-  } else if (verbose && G.screenOn) {
-    ui::message("Wi-Fi", "Connexion impossible", TFT_RED);
-    waitOrButton(2000);
+    sysResult(Sys::Server, ok);
   }
   G.serverOk = ok;
   if (!ok && rtc.failures < 250) rtc.failures++;
@@ -356,13 +388,14 @@ static void doRecord(const AgentState &s) {
   size_t len = 0;
   uint8_t *buf = audio_io::recordWav(heldFront, cfg::kRecRate, cfg::kRecMaxS, &len, recTick);
   if (!buf) { ui::message("Vocal", "Message trop court", TFT_ORANGE); waitOrButton(1200); return; }
+  if (!ensureOnline()) { heap_caps_free(buf); G.dirty = true; return; }  // la notification Wi-Fi dit pourquoi
   ui::message("Envoi...", gRecAgent, TFT_CYAN);
-  if (!ensureOnline()) { heap_caps_free(buf); ui::message("Vocal", "Wi-Fi indisponible", TFT_RED); waitOrButton(1500); return; }
   net::Resp r(4096);
   call(r, HTTP_METHOD_POST, voiceUploadUrl(G.base, s.agent), buf, len, "audio/wav");
   heap_caps_free(buf);
   handleAuth(r.code);
-  if (r.ok()) ui::message("Envoye", gRecAgent, TFT_GREEN);
+  if (r.code <= 0) { sysResult(Sys::Server, false); G.dirty = true; return; }  // transport : notification Serveur
+  if (r.ok()) { sysResult(Sys::Server, true); ui::message("Envoye", gRecAgent, TFT_GREEN); }
   else {
     ApiError e;
     ui::message("Echec envoi", parseApiError(r.text(), e) ? e.message : "HTTP " + std::to_string(r.code), TFT_RED);
@@ -374,7 +407,7 @@ static void doRecord(const AgentState &s) {
 static void doReplay() {
   if (!G.clip) {
     if (!rtc.lastClipId[0]) { ui::message("Reecoute", "Aucun message", TFT_ORANGE); waitOrButton(1200); return; }
-    if (!ensureOnline()) { ui::message("Reecoute", "Wi-Fi indisponible", TFT_RED); waitOrButton(1500); return; }
+    if (!ensureOnline()) { G.dirty = true; return; }
     ui::message("Reecoute", rtc.lastClipAgent, TFT_CYAN);
     if (fetchClip(rtc.lastClipId, rtc.lastClipAgent) != Fetch::Ok) {
       ui::message("Reecoute", "Message indisponible", TFT_RED);
@@ -386,8 +419,6 @@ static void doReplay() {
 }
 
 // ---- menu ----
-enum class Mode { Main, MenuRoot, MenuAgents };
-
 struct MenuCtx {
   MenuState st;
   Config work;           // copie editable des abonnements
@@ -500,7 +531,8 @@ static bool menuApply(MenuCtx &m, MenuAct act) {
 // ---- fenetre d'eveil : vue principale, menu, synchronisations periodiques ----
 // Sort quand l'inactivite depasse le delai de pause (jamais si pauseS == 0) ou si la phase n'est plus RUN.
 static void awakeLoop() {
-  Mode mode = Mode::Main;
+  Mode &mode = gMode;
+  mode = Mode::Main;
   MenuCtx menu;
   uint32_t menuLast = 0;
   touch();
@@ -512,6 +544,7 @@ static void awakeLoop() {
     uint32_t now = millis();
 
     if (mode == Mode::Main) {
+      if (G.notifs.expire(millis())) G.dirty = true;  // "OK" de connexion : auto-acquittement
       if (S.pauseS > 0 && now - G.activity >= (uint32_t)S.pauseS * 1000u) return;
       Press p; Button b; bool ev = false;
       if (SAN_BTN_TOP.wasClicked()) { b = Button::Top; p = Press::Click; ev = true; }
@@ -658,8 +691,7 @@ void setup() {
   if (G.buttonWake || wantPortal || cause == ESP_SLEEP_WAKEUP_UNDEFINED || neverSleep) {
     screenOn();
     // Affichage immediat depuis le cache RTC, avant tout acces reseau.
-    if (S.token.length() && rtc.active) redraw();
-    else ui::message("SAN", "Connexion...", TFT_CYAN);
+    redraw();  // vue principale (cache RTC ou vide) ; la connexion apparait comme notification
   }
 
   syncNow(true);
@@ -667,7 +699,8 @@ void setup() {
   if (G.phase == Phase::Run && (G.screenOn || neverSleep)) {
     screenOn();
     awakeLoop();
-  } else if (G.screenOn && G.phase == Phase::Pairing) {
+  } else if (G.screenOn) {
+    if (G.phase != Phase::Pairing) redraw();  // laisse voir l'erreur de connexion avant de dormir
     waitOrButton(3000);
   }
 

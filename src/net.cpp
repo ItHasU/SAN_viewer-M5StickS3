@@ -29,11 +29,12 @@ void wifiBegin(const Settings &s) {
   if (!sBegun && WiFi.status() != WL_CONNECTED) beginFast(s);
 }
 
-bool wifiConnect(const Settings &s, uint32_t timeoutMs) {
+bool wifiConnect(const Settings &s, uint32_t timeoutMs, void (*tick)()) {
   bool fast = sBegun ? false : beginFast(s);
   uint32_t t0 = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - t0 < timeoutMs) {
     delay(50);
+    if (tick) tick();
     // Repli : si la connexion rapide echoue a mi-parcours, retente un scan complet.
     if (fast && millis() - t0 > timeoutMs / 2 && WiFi.status() != WL_CONNECTED) {
       WiFi.disconnect();

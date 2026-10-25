@@ -44,6 +44,15 @@ pio device monitor
   est la somme des compteurs. Acquitter est **local** (le serveur est déjà acquitté dès que la notification est en file).
 - Un nouveau nudge allume l'écran et joue le son de son type (`lib/san_core/src/san_sound.*`, 1 son par lot : le
   plus important ; `high` = son répété 2 fois). Réveil timer sans nouveauté : écran éteint.
+- **Connexion = notifications locales, pas d'écran plein** (`san_notify.*`, `Sys`) : pendant la connexion une ligne
+  « Wi-Fi... » puis « Serveur... » (icône qui pulse) apparaît dans la zone du haut, seulement si l'écran est allumé.
+  Échec : ligne rouge « Wi-Fi » (icône barrée) / « Serveur » (icône croisée), fusion avec compteur `xN`. Rétablissement
+  après un échec : « Wi-Fi OK » / « Serveur OK » (coche verte) qui s'auto-acquitte après 4 s ; pas de « OK » sans échec
+  précédent. Une entrée de connexion est **remplacée** (pas empilée) quand l'état change, s'acquitte avec le bouton du
+  dessus comme les autres, n'est jamais envoyée au serveur ni comptée comme agent. Ces entrées sont **éphémères** (non
+  persistées en RTC) ; seuls les compteurs d'échecs consécutifs (`wifiFails`, `serverFails`) le sont. Son d'erreur :
+  écran déjà allumé, ou 2e échec consécutif (une seule fois, pas à chaque réveil hors couverture) ; un réveil timer
+  reste écran éteint. Restent en plein écran : portail Wi-Fi, code d'appairage, enregistrement, vocal, agents.
 
 ## Boutons
 

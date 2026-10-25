@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "san_notify.h"
 #include "san_types.h"
 #include "san_ui.h"
 
@@ -20,6 +21,8 @@ struct NotifLine {
   san::NudgeType type = san::NudgeType::Notification;
   bool voice = false, high = false;
   int count = 1;
+  san::Sys sys = san::Sys::None;  // etat de connexion local (pas un agent)
+  bool busy = false;              // connexion en cours : icone qui pulse
 };
 // Tout ce que la vue principale affiche (aucune logique de decision ici).
 struct MainView {
