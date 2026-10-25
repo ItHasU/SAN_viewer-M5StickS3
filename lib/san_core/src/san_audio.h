@@ -33,6 +33,7 @@ constexpr int kMicGainQ8 = 640;
 constexpr int kMicTarget = 21300;
 constexpr int kMicFadeInMs = 10;
 constexpr int kMicFadeOutMs = 20;
+int pcmPeak(const int16_t *pcm, size_t n);  // pic absolu (0..32768)
 int micGainQ8(const int16_t *pcm, size_t n);
 void applyGainQ8(int16_t *pcm, size_t n, int gainQ8);  // saturation par securite
 // Rampes lineaires : fade-in (kMicFadeInMs) et fade-out (kMicFadeOutMs) pour supprimer les clics de debut/fin.

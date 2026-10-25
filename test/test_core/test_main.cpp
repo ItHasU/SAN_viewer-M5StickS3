@@ -984,6 +984,14 @@ void test_mic_gain() {
   TEST_ASSERT_EQUAL(-32768, edge[1]);
 }
 
+void test_pcm_peak() {
+  std::vector<int16_t> v = {5, -300, 200, 0};
+  TEST_ASSERT_EQUAL(300, pcmPeak(v.data(), v.size()));
+  std::vector<int16_t> e = {-32768};
+  TEST_ASSERT_EQUAL(32768, pcmPeak(e.data(), 1));
+  TEST_ASSERT_EQUAL(0, pcmPeak(e.data(), 0));
+}
+
 void test_mic_fades() {
   std::vector<int16_t> v(16000, 10000);  // 1 s a 16 kHz
   applyFades(v.data(), v.size(), 16000);
@@ -1057,6 +1065,7 @@ int main(int, char **) {
   RUN_TEST(test_agent_row_layout_and_breath);
   RUN_TEST(test_conn_report_sound);
   RUN_TEST(test_mic_gain);
+  RUN_TEST(test_pcm_peak);
   RUN_TEST(test_mic_fades);
   return UNITY_END();
 }
