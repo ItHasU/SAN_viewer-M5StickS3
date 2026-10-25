@@ -20,6 +20,8 @@ std::string registerUrl(const std::string &base);
 std::string statusUrl(const std::string &base);
 std::string capabilitiesUrl(const std::string &base);
 std::string voiceClipUrl(const std::string &base, const std::string &clipId);
+// POST sans corps : marque le clip comme lu (idempotent) ; GET voiceClipUrl ne marque pas lu.
+std::string voicePlayedUrl(const std::string &base, const std::string &clipId);
 std::string voiceUploadUrl(const std::string &base, const std::string &agent);
 
 // ---- Capacites ----

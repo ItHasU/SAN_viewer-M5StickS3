@@ -80,6 +80,29 @@ void test_other_urls() {
 }
 
 // ---------- parsing ----------
+void test_parse_voice_pending() {
+  const char *json =
+      "{\"server_time\":\"t\",\"states\":["
+      "{\"agent\":\"a\",\"status\":\"waiting\",\"voice_pending\":2,\"voice_pending_clips\":[\"c_1\",\"c_2\"]},"
+      "{\"agent\":\"b\",\"status\":\"done\"},"
+      "{\"agent\":\"c\",\"status\":\"idle\",\"voice_pending\":-4,\"voice_pending_clips\":[]},"
+      "{\"agent\":\"d\",\"status\":\"idle\",\"voice_pending\":1,\"voice_pending_clips\":[\"c_9\",7,null]},"
+      "{\"agent\":\"e\",\"status\":\"idle\",\"voice_pending\":30,\"voice_pending_clips\":[\"c_1\"]}]}";
+  SyncResponse r;
+  TEST_ASSERT_TRUE(parseSync(json, r));
+  TEST_ASSERT_EQUAL(5, (int)r.states.size());
+  TEST_ASSERT_EQUAL(2, r.states[0].voicePending);
+  TEST_ASSERT_EQUAL(2, (int)r.states[0].voiceClips.size());
+  TEST_ASSERT_EQUAL_STRING("c_1", r.states[0].voiceClips[0].c_str());  // du plus ancien au plus recent
+  TEST_ASSERT_EQUAL_STRING("c_2", r.states[0].voiceClips[1].c_str());
+  TEST_ASSERT_EQUAL(0, r.states[1].voicePending);  // champs absents (ancien serveur)
+  TEST_ASSERT_TRUE(r.states[1].voiceClips.empty());
+  TEST_ASSERT_EQUAL(0, r.states[2].voicePending);  // negatif borne
+  TEST_ASSERT_EQUAL(1, (int)r.states[3].voiceClips.size());  // elements non texte ignores
+  TEST_ASSERT_EQUAL(30, r.states[4].voicePending);  // compteur > liste : le compteur fait foi pour la pastille
+  TEST_ASSERT_EQUAL_STRING("https://h/api/v1/viewer/voice/c_01J/played", voicePlayedUrl("https://h", "c_01J").c_str());
+}
+
 void test_parse_sync_full() {
   SyncResponse r;
   TEST_ASSERT_TRUE(parseSync(fx("sync_full.json"), r));
@@ -1068,6 +1091,7 @@ int main(int, char **) {
   RUN_TEST(test_sync_url);
   RUN_TEST(test_other_urls);
   RUN_TEST(test_parse_sync_full);
+  RUN_TEST(test_parse_voice_pending);
   RUN_TEST(test_parse_sync_config);
   RUN_TEST(test_parse_sync_empty_and_bad);
   RUN_TEST(test_parse_register_status);

@@ -18,6 +18,8 @@ struct AgentState {
   std::string agent, name, status, detail, updatedAt;
   int progress = -1;  // -1 = absent
   bool stale = false;
+  int voicePending = 0;                 // vocaux non lus (voice_pending) ; 0 si absent (ancien serveur)
+  std::vector<std::string> voiceClips;  // voice_pending_clips : du plus ancien au plus recent (20 max)
 };
 
 // Type d'un nudge (champ optionnel "type" ; absent ou inconnu -> Notification).

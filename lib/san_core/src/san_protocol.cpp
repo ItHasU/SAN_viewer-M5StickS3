@@ -56,6 +56,9 @@ std::string capabilitiesUrl(const std::string &b) { return b + API + "/viewer/ca
 std::string voiceClipUrl(const std::string &b, const std::string &id) {
   return b + API + "/viewer/voice/" + urlEncode(id);
 }
+std::string voicePlayedUrl(const std::string &b, const std::string &id) {
+  return b + API + "/viewer/voice/" + urlEncode(id) + "/played";
+}
 std::string voiceUploadUrl(const std::string &b, const std::string &agent) {
   return b + API + "/viewer/voice?to=" + urlEncode(agent);
 }
@@ -149,6 +152,11 @@ bool parseSync(const std::string &json, SyncResponse &out) {
     st.updatedAt = str(s["updated_at"]);
     st.progress = s["progress"].is<int>() ? s["progress"].as<int>() : -1;
     st.stale = s["stale"] | false;
+    st.voicePending = s["voice_pending"].is<int>() ? s["voice_pending"].as<int>() : 0;
+    if (st.voicePending < 0) st.voicePending = 0;
+    for (JsonVariantConst cl : s["voice_pending_clips"].as<JsonArrayConst>())
+      if (cl.is<const char *>() && st.voiceClips.size() < 20) st.voiceClips.push_back(cl.as<const char *>());
+    if (st.voicePending < (int)st.voiceClips.size()) st.voicePending = (int)st.voiceClips.size();
     out.states.push_back(st);
   }
   for (JsonObjectConst e : d["events"].as<JsonArrayConst>()) {
