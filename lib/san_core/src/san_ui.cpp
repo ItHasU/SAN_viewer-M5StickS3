@@ -96,6 +96,37 @@ int sceneBreath(uint32_t frame) {
   return tri * 4 / 24 - 2;
 }
 
+NotifLayout notifLayout(int n) {
+  NotifLayout l{0, 0, 0};
+  if (n <= 0) return l;
+  l.shown = n > kMaxNotifLines ? kMaxNotifLines : n;
+  int avail = kStatusY - 1 - kSummaryH;  // 84
+  l.lineH = avail / l.shown;             // 3 -> 28 ; 2 -> 42 ; 1 -> 84
+  if (l.lineH > 40) l.lineH = 40;
+  l.summaryY = l.shown * l.lineH;
+  return l;
+}
+
+IconRow iconRowLayout(int slots, int width) {
+  IconRow g{24, width, 0, 0};
+  if (slots < 1) slots = 1;
+  g.slotW = width / slots;
+  int r = (g.slotW - 6) / 2;
+  g.r = r > 24 ? 24 : r < 8 ? 8 : r;
+  int zone = kStatusY - 1;                    // zone utile (au-dessus du separateur)
+  int iconsH = 2 * g.r + 10;                  // rebond (2) + soulignement (6) + marges
+  int block = iconsH + 4 + kNameH;
+  int top = (zone - block) / 2;
+  if (top < 0) top = 0;
+  g.cy = top + 5 + g.r;
+  g.nameCy = top + iconsH + 4 + kNameH / 2;
+  return g;
+}
+
+Summary buildSummary(int pending, int working) {
+  return {formatCount(pending), working > 0, formatCount(working)};
+}
+
 size_t menuFirstRow(size_t cursor, size_t total, size_t visible) {
   if (total <= visible || cursor < visible) return 0;
   size_t first = cursor - visible + 1;

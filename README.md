@@ -23,43 +23,45 @@ pio device monitor
 
 `setRotation(1)` : USB-C en bas, bouton latéral (**dessus**) en haut, bouton **frontal** sur la face avant.
 
-Sans notification (y 0..75 = zone principale, séparateur y 76) :
+Sans notification (rangée d'icônes agrandies + nom ; seule la ligne de statut reste en bas) :
 
 ```
 +--------------------------------------+ y 0
-|          Pas de message              |   texte gris, centré (y 0..24)
-|   (cog)  (lune)  (coche)  (!)  (x)   |   une icône d'état par agent (y 26..55), 6 max, « +N » au-delà
-|          ‾‾‾‾‾‾                      |   barre blanche sous l'agent SÉLECTIONNÉ (si plusieurs agents)
-|          Nom de l'agent              |   NOM de l'agent sélectionné, police 24, centré, tronqué avec « ... »
-|--------------------------------------| y 76
-| cloche N | engrenage w/f |           |   nb de notifications | agents en activité / affichés
-| wifi  serveur  haut-parleur  veille  [batterie] 87% (éclair si charge)
+|                                      |
+|  (cog)  (lune)  (coche)  (!)  (x)    |   une icône d'état par agent, rayon 24 px max (17 px à 6 emplacements),
+|         ‾‾‾‾‾‾                       |   y ~7..55 ; barre sous l'agent SÉLECTIONNÉ ; « +N » au-delà de 6
+|        Nom de l'agent                |   NOM sélectionné, police 40 (24 si trop large), centré, y ~64..106
+|--------------------------------------| y 108 (séparateur)
+| wifi  serveur  haut-parleur  veille  [batterie] 87% (éclair si charge)   y 109..134 (26 px)
 +--------------------------------------+ y 135
 ```
 
-Avec notifications (y compris entrées système « Wi-Fi » / « Serveur »), exemple à 1 notification :
+Avec notifications (y compris entrées système « Wi-Fi » / « Serveur »), exemple à 3 notifications :
 
 ```
 +--------------------------------------+ y 0
-| [icone] Agent                    x2  |   notifications (3 lignes max de 25 px, la plus récente en haut ;
-|                                      |   icône du type : start / notification / question / done / error / vocal)
-|   (cog)    (lune)    (coche)         |   ANIMATION d'agents dans la place restante (y 26..75) : engrenage
-|            ‾‾‾‾‾‾                    |   cyan animé, agents à l'arrêt atténués, respiration, « +N »
-|--------------------------------------| y 76   (le nom de l'agent n'est pas affiché)
-| cloche N | engrenage w/f |  wifi ... |   comme ci-dessus
-+--------------------------------------+
+| [icone] Agent                    x2  |   ligne 1 (la plus récente), 28 px
+| [icone] Agent                        |   ligne 2, 28 px
+| [icone] Agent                        |   ligne 3, 28 px            (y 0..83)
+| cloche N        engrenage w          |   résumé, 24 px (y 84..107) ; engrenage animé seulement si w > 0
+|--------------------------------------| y 108
+| wifi  serveur  haut-parleur  veille  [batterie] 87%   statut, y 109..134 (26 px)
++--------------------------------------+ y 135
 ```
+
+Hauteur des lignes de notification : 1 ou 2 notifications = 40 px, 3 = 28 px (`notifLayout`, `san_ui.*`) ; le
+résumé suit directement la dernière ligne (il reste un espace noir avec 1 ou 2 notifications).
 
 - Plus aucun détail texte d'agent en bas : icônes et grandes polices. Les notifications du haut gardent icône +
   nom court de l'agent. `priority: high` = ligne sur fond vif.
-- **Sans notification** : haut = « Pas de message » ; rangée d'icônes par agent (30 px) avec l'agent sélectionné
-  souligné ; bas (zone qui accueille l'animation quand il y a des notifications) = **nom de l'agent sélectionné**
-  en police 24 (tronqué par `agentLabel` à 18 caractères puis ajusté à la largeur). Pas de barre de progression
-  par agent (pas de place). Dessin de la rangée et du nom : `drawScene` / `drawSelName`, `src/ui.cpp`.
-- **Avec notifications** : les lignes de notification occupent le haut ; la scène animée est dessinée **à la place
-  du nom**, dans la hauteur restante sous les lignes : 1 notification = 50 px (scène complète), 2 = 25 px (icônes
-  réduites), 3 = aucune place (pas de scène ; l'engrenage du compteur reste animé). Pas de rangée d'icônes séparée :
-  la scène animée joue ce rôle, avec le même soulignement de l'agent sélectionné quand il tient.
+- **Sans notification** : plus de texte « Pas de message », plus de compteurs ni de scène en bas. Rangée d'icônes
+  agrandies (rayon selon le nombre d'emplacements : 24 px jusqu'à 4, 21 à 5, 17 à 6 ; `iconRowLayout`) avec l'agent
+  sélectionné souligné, et **nom de l'agent sélectionné** en police 40 (24 si trop large, puis tronqué ; `agentLabel`
+  limite à 18 caractères). L'animation des agents `working` (engrenage cyan qui tourne) est conservée sur la rangée.
+  Dessin : `drawScene` / `drawSelName`, `src/ui.cpp`.
+- **Avec notifications** : jusqu'à 3 lignes (la plus récente en haut, icône du type + nom court + `xN`, fond vif si
+  priorité haute), puis **une ligne de résumé** (cloche + total en attente ; engrenage animé + nombre d'agents en
+  activité s'il y en a), puis la ligne de statut. Ni rangée d'icônes ni nom d'agent dans ce mode.
 - **Scène / rangée d'icônes** : 1 pictogramme par agent affiché, sans nom (`buildScene`, `san_ui.*`) :
   `working` = engrenage cyan qui tourne (léger rebond, phases décalées) ; à l'arrêt = pictogramme statique atténué
   (lune grise `idle`/périmé, coche verte `done`, point d'exclamation orange `waiting`, croix rouge `error`).
@@ -67,12 +69,12 @@ Avec notifications (y compris entrées système « Wi-Fi » / « Serveur »), ex
   « +N » (la fenêtre glisse pour garder l'agent sélectionné visible). L'agent sélectionné (bouton du dessus : agent
   suivant) est souligné ; il est conservé entre deux sommeils (RTC, par slug, `rtc.selAgent`). Dessin dans le canevas PSRAM (sans scintillement), animé seulement pendant la
   fenêtre d'éveil (80 ms si activité, 120 ms au repos).
-- Activité : l'engrenage tourne et une petite barre glisse si au moins un agent est `working` ; `w/f` = agents en
-  activité / agents affichés (tous ceux de la config).
+- Résumé (avec notifications) : cloche + total en attente ; si au moins un agent est `working`, un engrenage tourne
+  avec le nombre d'agents en activité.
 - Statut : Wi-Fi (barré = hors ligne), serveur (barré = dernière synchronisation en échec), haut-parleur (barré =
   volume 0), lune (barrée = veille automatique désactivée), batterie (jauge colorée + %, éclair en charge).
 - File de notifications : nudges et vocaux reçus, bornée à 16 entrées, persistée en RTC memory entre deux sommeils
-  (perdue à une coupure d'alimentation). Même agent + même type = fusion avec compteur (`x2`) ; le total du bas
+  (perdue à une coupure d'alimentation). Même agent + même type = fusion avec compteur (`x2`) ; le total du résumé
   est la somme des compteurs. Acquitter est **local** (le serveur est déjà acquitté dès que la notification est en file).
 - Un nouveau nudge allume l'écran et joue le son de son type (`lib/san_core/src/san_sound.*`, 1 son par lot : le
   plus important ; `high` = son répété 2 fois). Réveil timer sans nouveauté : écran éteint.
@@ -133,8 +135,8 @@ portail (premier démarrage). Le serveur n'est pas modifié : la carte réappara
 enregistrement reste à révoquer par l'administrateur.
 
 **Agents affichés** : la carte n'a plus de filtre local. Tous les agents de la configuration reçue du serveur
-(`config.agents`, dans l'ordre de la config, ceux qui ont un état) sont affichés et pris en compte : scène, compteurs
-« en activité / suivis », bascule d'agent, notifications. Les champs `subscribed`, `muted` et `new` reçus sont ignorés
+(`config.agents`, dans l'ordre de la config, ceux qui ont un état) sont affichés et pris en compte : rangée d'icônes, résumé
+(agents en activité), bascule d'agent, notifications. Les champs `subscribed`, `muted` et `new` reçus sont ignorés
 et la carte n'envoie plus rien à `/viewer/config` (plus de `PUT`, plus de gestion du 409 ; le `config_hash` du
 `GET /viewer/sync` reste utilisé pour recevoir la config). Le filtrage se règle côté serveur/admin : une carte en mode
 `manual` ne reçoit que les agents cochés côté admin (la carte ne contourne pas cela) ; en mode `auto`, le serveur

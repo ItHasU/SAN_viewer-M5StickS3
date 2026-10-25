@@ -935,6 +935,49 @@ void test_scene_breath_range() {
   TEST_ASSERT_EQUAL(sceneBreath(5), sceneBreath(53));
 }
 
+void test_notif_layout_budget() {
+  TEST_ASSERT_EQUAL(0, notifLayout(0).shown);
+  for (int n = 1; n <= 6; n++) {
+    NotifLayout l = notifLayout(n);
+    TEST_ASSERT_EQUAL(n > 3 ? 3 : n, l.shown);
+    TEST_ASSERT_TRUE(l.lineH >= 25 && l.lineH <= 40);
+    TEST_ASSERT_EQUAL(l.shown * l.lineH, l.summaryY);
+    // lignes + resume tiennent au-dessus du separateur (kStatusY - 1) : ni debordement ni chevauchement
+    TEST_ASSERT_TRUE(l.summaryY + kSummaryH <= kStatusY - 1);
+  }
+  TEST_ASSERT_EQUAL(28, notifLayout(3).lineH);
+  TEST_ASSERT_EQUAL(40, notifLayout(1).lineH);
+  TEST_ASSERT_EQUAL(kScreenH, kStatusY + kStatusH);
+}
+
+void test_icon_row_layout() {
+  TEST_ASSERT_EQUAL(24, iconRowLayout(1).r);
+  TEST_ASSERT_EQUAL(24, iconRowLayout(4).r);
+  int prev = 99;
+  for (int slots = 1; slots <= 6; slots++) {
+    IconRow g = iconRowLayout(slots);
+    TEST_ASSERT_TRUE(g.r <= prev);  // plus d'agents : icones plus petites
+    prev = g.r;
+    TEST_ASSERT_TRUE(2 * g.r + 6 <= g.slotW);  // pas de chevauchement horizontal
+    TEST_ASSERT_TRUE(g.cy - g.r - 2 >= 0);     // rebond en haut
+    TEST_ASSERT_TRUE(g.nameCy - kNameH / 2 > g.cy + g.r + 6);  // nom sous le soulignement
+    TEST_ASSERT_TRUE(g.nameCy + kNameH / 2 <= kStatusY - 1);   // nom au-dessus du separateur
+  }
+  TEST_ASSERT_EQUAL(21, iconRowLayout(5).r);
+  TEST_ASSERT_EQUAL(17, iconRowLayout(6).r);
+  TEST_ASSERT_TRUE(iconRowLayout(0).r == 24);  // robuste
+}
+
+void test_summary() {
+  Summary a = buildSummary(3, 0);
+  TEST_ASSERT_EQUAL_STRING("3", a.pending.c_str());
+  TEST_ASSERT_FALSE(a.showWorking);
+  Summary b = buildSummary(120, 2);
+  TEST_ASSERT_EQUAL_STRING("99+", b.pending.c_str());
+  TEST_ASSERT_TRUE(b.showWorking);
+  TEST_ASSERT_EQUAL_STRING("2", b.working.c_str());
+}
+
 void test_menu_scroll_and_reset_hold() {
   TEST_ASSERT_EQUAL(0, (int)menuFirstRow(0, 7, 5));
   TEST_ASSERT_EQUAL(0, (int)menuFirstRow(4, 7, 5));
@@ -1016,6 +1059,9 @@ int main(int, char **) {
   RUN_TEST(test_scene_calm_and_empty);
   RUN_TEST(test_scene_grouping);
   RUN_TEST(test_scene_breath_range);
+  RUN_TEST(test_notif_layout_budget);
+  RUN_TEST(test_icon_row_layout);
+  RUN_TEST(test_summary);
   RUN_TEST(test_menu_scroll_and_reset_hold);
   return UNITY_END();
 }

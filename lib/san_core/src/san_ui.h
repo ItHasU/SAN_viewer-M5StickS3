@@ -39,17 +39,17 @@ Activity summarizeActivity(const std::vector<AgentState> &states);
 size_t nextAgentIndex(size_t cur, size_t count);
 size_t clampAgentIndex(size_t cur, size_t count);
 
-// Nom de l'agent affiche en grand (bas de l'ecran sans notification) : nom de la config (sinon le slug), tronque a
+// Nom de l'agent affiche en grand (sans notification) : nom de la config (sinon le slug), tronque a
 // `maxChars` caracteres avec "..." (sans couper un caractere UTF-8).
 std::string agentLabel(const Config &cfg, const AgentState &s, int maxChars);
 
-// ---- Scene principale (aucune notification) : un pictogramme par agent suivi ----
+// ---- Rangee d'icones (aucune notification) : un pictogramme par agent suivi ----
 constexpr size_t kSceneMax = 6;  // emplacements au maximum (le dernier devient "+N" au-dela)
 struct SceneAgent {
   Icon icon;       // pictogramme d'etat (statusIcon)
   uint16_t color;  // couleur pleine RGB565 ; l'affichage l'attenue si !animated
   bool animated;   // working : anime ; sinon statique et attenue
-  bool selected;   // agent cible (souligne discretement, sans nom)
+  bool selected;   // agent cible (souligne ; son nom est affiche en grand)
 };
 struct Scene {
   std::vector<SceneAgent> agents;  // emplacements affiches, dans l'ordre
@@ -61,6 +61,35 @@ struct Scene {
 Scene buildScene(const std::vector<AgentState> &states, size_t sel, size_t maxShown = kSceneMax);
 // Decalage vertical (-2..2 px) de la respiration lente, periode 48 images.
 int sceneBreath(uint32_t frame);
+
+// ---- Mise en page de la vue principale (paysage 240x135) ----
+constexpr int kScreenW = 240, kScreenH = 135;
+constexpr int kStatusY = 109, kStatusH = 26;  // ligne de statut en bas ; separateur en y = kStatusY - 1
+constexpr int kMaxNotifLines = 3;
+constexpr int kSummaryH = 24;  // ligne de resume (avec notifications)
+constexpr int kNameH = 42;     // hauteur reservee au nom de l'agent (police 40)
+// Avec n notifications (n > 0) : lignes empilees en haut (hauteur selon n), puis le resume juste dessous.
+struct NotifLayout {
+  int shown;      // lignes affichees (0..3)
+  int lineH;      // hauteur d'une ligne
+  int summaryY;   // haut de la ligne de resume (0 si aucune notification)
+};
+NotifLayout notifLayout(int n);
+// Sans notification : rangee d'icones (`slots` emplacements, "+N" compris) et nom, centres dans y 0..kStatusY-2.
+struct IconRow {
+  int r;        // rayon des icones (<= 24)
+  int slotW;    // largeur d'un emplacement
+  int cy;       // ordonnee du centre des icones
+  int nameCy;   // ordonnee du centre du nom
+};
+IconRow iconRowLayout(int slots, int width = kScreenW);
+// Ligne de resume : total en attente (cloche) et, s'il y en a, agents en activite (engrenage anime).
+struct Summary {
+  std::string pending;
+  bool showWorking;
+  std::string working;
+};
+Summary buildSummary(int pending, int working);
 
 // ---- Batterie ----
 enum class Charge { Unknown, Discharging, Charging };

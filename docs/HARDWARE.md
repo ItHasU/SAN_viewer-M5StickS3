@@ -115,7 +115,7 @@ USB disparaît pendant le deep sleep), serveur SAN en Docker (compose standalone
 
 Évolution suivante (voir README, « Boutons ») : vue principale à icônes (notifications en haut, activité et statut en bas), file de notifications, menu de réglages (volume, lumière, pause), batterie avec éclair de charge.
 
-Ajouts non testés sur carte (à valider) : vue sans notification (« Pas de message », icônes par agent avec sélection soulignée, nom de l'agent sélectionné en bas ; avec notifications la scène animée remplace le nom, sélection au bouton du dessus conservée en RTC, magic RTC 0x53414E05), scène animée sans notification (un pictogramme par agent, `working` = engrenage
+Ajouts non testés sur carte (à valider) : nouvelle mise en page de la vue principale (sans notification : rangée d'icônes agrandies, rayon 24 px max, + nom de l'agent sélectionné en police 40, seule la ligne de statut en bas ; avec notifications : 3 lignes de 28 px, résumé de 24 px (cloche + total, engrenage animé si agents en activité), statut de 26 px ; plus de scène animée en bas ni de « Pas de message »), sélection au bouton du dessus conservée en RTC (magic RTC 0x53414E05), animation de la rangée (un pictogramme par agent, `working` = engrenage
 cyan, autres atténués, « +N » au-delà de 6), menu à 6 lignes (Volume, Lumière, Pause, Config Wi-Fi, Réinitialiser, Sortir ; 5 visibles) avec défilement, **Config Wi-Fi (AP)** (portail WiFiManager
 non bloquant lancé depuis le menu, annulable au clic, timeout 240 s, sans redémarrage) et **Réinitialiser** (maintien 3 s
 du bouton du dessus, annulable au bouton frontal : efface NVS + RTC puis redémarre en portail ; journal série
