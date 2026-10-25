@@ -540,62 +540,115 @@ void test_nudge_type_in_sync() {
   TEST_ASSERT_TRUE(sr.events[4].type == NudgeType::Error);
 }
 
-void test_nudge_sounds_exist_and_bounded() {
-  for (NudgeType t : kAllTypes) {
-    SoundPattern p = nudgeSound(t);
-    TEST_ASSERT_NOT_NULL(p.notes);
-    TEST_ASSERT_TRUE(p.count > 0);
-    bool audible = false;
-    for (size_t i = 0; i < p.count; i++) {
-      TEST_ASSERT_TRUE(p.notes[i].ms > 0);
-      if (p.notes[i].freq) { audible = true; TEST_ASSERT_TRUE(p.notes[i].freq >= 80 && p.notes[i].freq <= 4000); }
+static std::vector<int16_t> renderAll(NudgeType t, size_t block) {
+  size_t total = nudgeSound(t).samples;
+  std::vector<int16_t> pcm(total + block);
+  for (size_t off = 0; off < total; off += block) soundRender(t, off, &pcm[off], block);  // synthese par blocs
+  pcm.resize(total);
+  return pcm;
+}
+
+void test_sound_durations_and_notes() {
+  const uint32_t expectMs[] = {1060, 1200, 1400, 1700, 1380};  // SONS.md section 3, queue de 0,3 s comprise
+  const size_t expectNotes[] = {2, 1, 2, 3, 2};
+  for (size_t i = 0; i < 5; i++) {
+    const SoundSpec &s = nudgeSound(kAllTypes[i]);
+    TEST_ASSERT_EQUAL(expectNotes[i], s.count);
+    TEST_ASSERT_EQUAL(expectMs[i], nudgeSoundMs(kAllTypes[i]));
+    float end = 0;
+    for (size_t k = 0; k < s.count; k++) {
+      TEST_ASSERT_TRUE(s.notes[k].freq >= 100 && s.notes[k].freq * (s.rounded ? 3 : 4) < kSoundRate / 2.0f);  // sous Nyquist
+      end = std::max(end, s.notes[k].start + s.notes[k].dur);
     }
-    TEST_ASSERT_TRUE(audible);
-    TEST_ASSERT_TRUE(nudgeSoundMs(t, false) > 0);
-    TEST_ASSERT_TRUE(nudgeSoundMs(t, false) < 3000);
-    TEST_ASSERT_TRUE(nudgeSoundMs(t, true) < 3000);
-    TEST_ASSERT_TRUE(nudgeSoundMs(t, true) > nudgeSoundMs(t, false));
+    TEST_ASSERT_EQUAL((long)lroundf((end + 0.3f) * kSoundRate), (long)s.samples);  // derniere note + 0,3 s
   }
-  TEST_ASSERT_EQUAL(1, nudgeRepeats(false));
-  TEST_ASSERT_EQUAL(2, nudgeRepeats(true));
+  TEST_ASSERT_EQUAL(27200, (int)nudgeSound(NudgeType::Done).samples);  // le plus long
 }
 
-static bool samePattern(SoundPattern a, SoundPattern b) {
-  if (a.count != b.count) return false;
-  for (size_t i = 0; i < a.count; i++)
-    if (a.notes[i].freq != b.notes[i].freq || a.notes[i].ms != b.notes[i].ms) return false;
-  return true;
+void test_sound_peak_normalised() {
+  for (NudgeType t : kAllTypes) {
+    auto pcm = renderAll(t, 512);
+    int pk = 0;
+    for (int16_t v : pcm) pk = std::max(pk, std::abs((int)v));
+    float want = kSoundPeak * (t == NudgeType::Error ? kErrorBoost : 1.0f);
+    float got = pk / 32767.0f;
+    TEST_ASSERT_FLOAT_WITHIN(want * 0.02f, want, got);  // 0,35 +/- 2 %
+    TEST_ASSERT_TRUE(pk < 32767);                       // pas de depassement 16 bits
+  }
 }
 
-void test_nudge_sounds_and_styles_distinct() {
+void test_sound_no_click_and_block_independent() {
+  for (NudgeType t : kAllTypes) {
+    auto a = renderAll(t, 512);
+    TEST_ASSERT_TRUE(std::abs((int)a.front()) <= 60);   // attaque progressive : demarre pres de 0
+    TEST_ASSERT_EQUAL(0, a.back());                     // queue silencieuse
+    // la taille de bloc ne change pas le resultat
+    auto b = renderAll(t, 100);
+    TEST_ASSERT_TRUE(a == b);
+    // rampe de coupure : aucun saut brutal entre echantillons voisins (pas de clic)
+    int maxStep = 0;
+    for (size_t i = 1; i < a.size(); i++) maxStep = std::max(maxStep, std::abs((int)a[i] - (int)a[i - 1]));
+    TEST_ASSERT_TRUE_MESSAGE(maxStep < 8000, "saut brutal (clic)");  // pente max d'un sinus 3,5 kHz ~ 6000 ; un clic ferait ~ le pic (11469)
+  }
+  // au-dela de la fin : silence
+  int16_t out[8];
+  soundRender(NudgeType::Notification, 19200 + 5, out, 8);
+  for (int16_t v : out) TEST_ASSERT_EQUAL(0, v);
+}
+
+void test_sound_error_is_low_and_distinct() {
+  const SoundSpec &e = nudgeSound(NudgeType::Error);
+  TEST_ASSERT_TRUE(e.rounded);
+  TEST_ASSERT_TRUE(e.notes[0].freq < 300 && e.notes[1].freq < e.notes[0].freq);
   for (size_t i = 0; i < 5; i++)
     for (size_t j = i + 1; j < 5; j++) {
-      TEST_ASSERT_FALSE(samePattern(nudgeSound(kAllTypes[i]), nudgeSound(kAllTypes[j])));
+      TEST_ASSERT_TRUE(renderAll(kAllTypes[i], 512) != renderAll(kAllTypes[j], 512));
       NudgeStyle a = nudgeStyle(kAllTypes[i]), b = nudgeStyle(kAllTypes[j]);
       TEST_ASSERT_TRUE(a.icon != b.icon);
       TEST_ASSERT_TRUE(a.color != b.color);
     }
 }
 
-void test_nudge_sound_shapes() {
-  // notification : 3 x (grave, aigu) alternes
-  SoundPattern n = nudgeSound(NudgeType::Notification);
-  int audible = 0;
-  for (size_t i = 0; i < n.count; i++) if (n.notes[i].freq) audible++;
-  TEST_ASSERT_EQUAL(6, audible);
-  // done : arpege montant do-mi-sol-do
-  SoundPattern d = nudgeSound(NudgeType::Done);
-  TEST_ASSERT_EQUAL(4, (int)d.count);
-  for (size_t i = 1; i < d.count; i++) TEST_ASSERT_TRUE(d.notes[i].freq > d.notes[i - 1].freq);
-  // question : se termine plus haut qu'il ne commence
-  SoundPattern q = nudgeSound(NudgeType::Question);
-  TEST_ASSERT_TRUE(q.notes[q.count - 1].freq > q.notes[0].freq);
-  // error : grave et descendant
-  SoundPattern e = nudgeSound(NudgeType::Error);
-  TEST_ASSERT_TRUE(e.notes[0].freq < 300);
-  TEST_ASSERT_TRUE(e.notes[2].freq < e.notes[0].freq);
+void test_sound_priority_order() {
+  TEST_ASSERT_TRUE(soundPriority(NudgeType::Error) > soundPriority(NudgeType::Question));
+  TEST_ASSERT_TRUE(soundPriority(NudgeType::Question) > soundPriority(NudgeType::Done));
+  TEST_ASSERT_TRUE(soundPriority(NudgeType::Done) > soundPriority(NudgeType::Notification));
+  TEST_ASSERT_TRUE(soundPriority(NudgeType::Notification) > soundPriority(NudgeType::Start));
 }
 
+void test_sound_scheduler_rules() {
+  SoundScheduler s;
+  NudgeType t;
+  TEST_ASSERT_FALSE(s.poll(0, false, t));  // rien a jouer
+  // start muet par defaut
+  s.request(NudgeType::Start);
+  TEST_ASSERT_FALSE(s.pending());
+  // un seul son a la fois : une demande pendant la lecture attend la fin
+  s.request(NudgeType::Done);
+  TEST_ASSERT_TRUE(s.poll(1000, false, t));
+  TEST_ASSERT_TRUE(t == NudgeType::Done);
+  s.request(NudgeType::Question);
+  TEST_ASSERT_FALSE(s.poll(1500, true, t));  // en cours
+  TEST_ASSERT_FALSE(s.poll(2700, false, t)); // fini a 2700 : delai de 2 s
+  TEST_ASSERT_FALSE(s.poll(4699, false, t));
+  TEST_ASSERT_TRUE(s.poll(4700, false, t));
+  TEST_ASSERT_TRUE(t == NudgeType::Question);
+  // les demandes proches fusionnent : seul le type le plus prioritaire joue
+  s.poll(5000, true, t);
+  s.poll(6000, false, t);  // fin du son a 6000
+  s.request(NudgeType::Notification);
+  s.request(NudgeType::Error);
+  s.request(NudgeType::Done);
+  TEST_ASSERT_FALSE(s.poll(7000, false, t));
+  TEST_ASSERT_TRUE(s.poll(8000, false, t));
+  TEST_ASSERT_TRUE(t == NudgeType::Error);
+  TEST_ASSERT_FALSE(s.pending());
+  TEST_ASSERT_FALSE(s.poll(20000, true, t));  // pas de second son
+  // premier son d'un reveil : pas de delai
+  SoundScheduler f;
+  f.request(NudgeType::Notification);
+  TEST_ASSERT_TRUE(f.poll(5, false, t));
+}
 
 // ---------- file de notifications ----------
 void test_notif_push_merge_order() {
@@ -1041,9 +1094,12 @@ int main(int, char **) {
   RUN_TEST(test_status_icon);
   RUN_TEST(test_nudge_type_parse);
   RUN_TEST(test_nudge_type_in_sync);
-  RUN_TEST(test_nudge_sounds_exist_and_bounded);
-  RUN_TEST(test_nudge_sounds_and_styles_distinct);
-  RUN_TEST(test_nudge_sound_shapes);
+  RUN_TEST(test_sound_durations_and_notes);
+  RUN_TEST(test_sound_peak_normalised);
+  RUN_TEST(test_sound_no_click_and_block_independent);
+  RUN_TEST(test_sound_error_is_low_and_distinct);
+  RUN_TEST(test_sound_priority_order);
+  RUN_TEST(test_sound_scheduler_rules);
   RUN_TEST(test_notif_push_merge_order);
   RUN_TEST(test_notif_ack_and_capacity);
   RUN_TEST(test_notif_restore_roundtrip);

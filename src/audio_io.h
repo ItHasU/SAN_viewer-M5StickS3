@@ -12,11 +12,12 @@ void setVolume(int v);
 void beep();
 // Interrompt la lecture si abortOnButton et qu'un bouton est presse. Renvoie false si format non supporte.
 bool playWav(const uint8_t *data, size_t len, bool abortOnButton = true);
-// Son de nudge non bloquant : soundStart() lance, soundTick() doit etre appele regulierement,
-// soundWait() bloque jusqu'a la fin (avant le deep sleep).
-void soundStart(san::NudgeType type, bool high);
+// Son de nudge marimba (non bloquant, regles anti-bruit de san::SoundScheduler) : requestSound() enregistre,
+// soundTick() (via housekeeping) synthetise et lance, soundWait() bloque jusqu'a la fin (avant le deep sleep).
+void requestSound(san::NudgeType type);
 void soundTick();
 bool soundBusy();
+bool soundPending();
 void soundWait();
 void soundStop();
 // Coupe tout le chemin audio (ampli + DAC) ; sans effet si deja coupe. Le haut-parleur n'est demarre qu'a la demande.

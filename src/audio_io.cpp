@@ -70,39 +70,40 @@ bool playWav(const uint8_t *data, size_t len, bool abortOnButton) {
   return true;
 }
 
-// Sequenceur non bloquant : chaque note est lancee par soundTick() quand la precedente est finie.
-static const san::Note *sNotes = nullptr;
-static size_t sCount = 0, sIdx = 0;
-static int sRepeatsLeft = 0;
-static uint32_t sNextAt = 0;
+// Synthese marimba par blocs (san_sound) : 3 tampons de kBlock echantillons, remplis a la demande et mis en file
+// dans playRaw (2 en file au plus par canal). Aucun tampon complet : le plus long son ferait 54 Ko.
+static constexpr size_t kBlock = 1024;  // 64 ms
+static int16_t sBuf[3][kBlock];
+static san::NudgeType sType = san::NudgeType::Notification;
+static size_t sPos = 0, sTotal = 0;
+static int sBufIdx = 0;
 static bool sActive = false;
+static san::SoundScheduler sSched;
 
-void soundStart(san::NudgeType type, bool high) {
-  if (sVolume <= 0 || !speakerBegin()) return;
-  san::SoundPattern p = san::nudgeSound(type);
-  sNotes = p.notes; sCount = p.count; sIdx = 0;
-  sRepeatsLeft = san::nudgeRepeats(high);
-  sNextAt = millis();
-  sActive = true;
-  soundTick();
-}
-
-void soundTick() {
-  if (!sActive) return;
-  while (sActive && (int32_t)(millis() - sNextAt) >= 0) {
-    if (sIdx >= sCount) {
-      if (--sRepeatsLeft <= 0) { sActive = false; break; }
-      sIdx = 0;
-      sNextAt += 150;  // pause entre deux passages
-      continue;
-    }
-    const san::Note &n = sNotes[sIdx++];
-    if (n.freq) M5.Speaker.tone(n.freq, n.ms);
-    sNextAt += n.ms;
+static void soundFeed() {
+  while (sActive && M5.Speaker.isPlaying(0) < 2) {
+    size_t n = sTotal - sPos < kBlock ? sTotal - sPos : kBlock;
+    san::soundRender(sType, sPos, sBuf[sBufIdx], n);
+    M5.Speaker.playRaw(sBuf[sBufIdx], n, san::kSoundRate, false, 1, 0, false);
+    sBufIdx = (sBufIdx + 1) % 3;
+    sPos += n;
+    if (sPos >= sTotal) sActive = false;
   }
 }
 
+// Demande un son de nudge : soumis aux regles anti-bruit (un a la fois, 2 s mini, type le plus prioritaire).
+void requestSound(san::NudgeType type) { sSched.request(type); }
+
+void soundTick() {
+  san::NudgeType t;
+  if (sSched.poll(millis(), soundBusy(), t) && sVolume > 0 && speakerBegin()) {
+    sType = t; sPos = 0; sTotal = san::nudgeSound(t).samples; sBufIdx = 0; sActive = true;
+  }
+  soundFeed();
+}
+
 bool soundBusy() { return sActive || M5.Speaker.isPlaying(); }
+bool soundPending() { return sSched.pending(); }
 
 void soundWait() {
   while (soundBusy()) { soundTick(); delay(5); }
@@ -110,6 +111,7 @@ void soundWait() {
 
 void soundStop() {
   sActive = false;
+  sSched.clear();
   M5.Speaker.stop();
 }
 
@@ -143,7 +145,7 @@ void quiesce() {
 
 void housekeeping() {
   soundTick();
-  if (sSpkOn && !sActive && !M5.Speaker.isPlaying()) speakerOff();
+  if (sSpkOn && !sActive && !M5.Speaker.isPlaying()) speakerOff();  // fin du dernier bloc : ampli et codec coupes
 }
 
 uint8_t *recordWav(bool (*isHeld)(), int rate, int maxSeconds, size_t *outLen, void (*onTick)(int)) {

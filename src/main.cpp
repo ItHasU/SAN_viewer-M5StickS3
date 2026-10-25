@@ -124,7 +124,7 @@ static void sysResult(Sys s, bool ok) {
   ConnOutcome o = connReport(fails, ok, G.screenOn);
   if (o.show) G.notifs.setSystem(s, o.state, millis());
   else G.notifs.clearSystem(s);
-  if (o.sound) audio_io::soundStart(NudgeType::Error, false);  // non bloquant
+  if (o.sound) audio_io::requestSound(NudgeType::Error);
   sysShow();
 }
 static void sysTick() {
@@ -251,8 +251,7 @@ static size_t processEvents(const std::vector<EventItem> &events) {
     done++;
     if (G.phase != Phase::Run) break;
   }
-  NudgeType t; bool high;
-  if (pickAlert(alerted, t, high)) audio_io::soundStart(t, high);  // non bloquant : la boucle l'entretient
+  for (auto &e : alerted) audio_io::requestSound(e.type);  // anti-bruit dans audio_io ; la boucle entretient
   return done;
 }
 
@@ -610,7 +609,11 @@ static void awakeLoop() {
 
 // ---------------- sommeil ----------------
 static void sleepNow(int seconds) {
-  audio_io::soundWait();  // laisse finir un son en cours avant de dormir
+  for (uint32_t t0 = millis(); (audio_io::soundBusy() || audio_io::soundPending()) && millis() - t0 < 6000;) {
+    audio_io::housekeeping();  // laisse finir (et lancer) les sons en attente avant de dormir
+    delay(5);
+  }
+  audio_io::soundWait();
   audio_io::quiesce();
   M5.Mic.end();
   freeClip();
