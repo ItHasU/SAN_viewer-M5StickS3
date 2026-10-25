@@ -21,11 +21,11 @@ constexpr int kPortalTimeoutS = 240;
 constexpr int kMaxAgents = 16;           // taille du cache RTC
 constexpr int kBootPortalHoldMs = 3000;  // bouton du dessus maintenu au boot : portail de config
 constexpr int kHoldMs = 500;             // appui long (enregistrement, menu, bascule d'agent)
-constexpr int kNotifLines = 3;           // lignes de notification affichees en haut
+constexpr int kMicSettleMs = 500;        // montee du codec micro (transitoire sature) : ignoree avant d'enregistrer
 constexpr int kBatteryRefreshMs = 30000;
 }  // namespace cfg
 
 // Affectation des boutons (hypothese a valider sur la carte : avec setRotation(1), le bouton lateral est en haut).
 // Pour inverser, echanger ces deux lignes. Les deux boutons reveillent la carte (ext1 G11 / G12).
-#define SAN_BTN_TOP M5.BtnB    // dessus : acquitter, agent suivant, agir dans le menu
-#define SAN_BTN_FRONT M5.BtnA  // frontal : repeter, enregistrer, menu (double clic), defiler
+#define SAN_BTN_TOP M5.BtnB    // dessus : agent suivant / element de menu suivant (clic), parametres (appui long)
+#define SAN_BTN_FRONT M5.BtnA  // frontal : lire le vocal / agir dans le menu (clic), enregistrer (appui long)

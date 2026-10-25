@@ -9,38 +9,48 @@
 
 namespace audio_io {
 
-static int sVolume = 230;
+static int sVolNotif = 230, sVolVoice = 230;  // deux volumes distincts : sons de nudge / voix
 static bool sSpkOn = false;
+static bool sMicOn = false;
+static uint32_t sMicAt = 0;
 
-static bool speakerBegin() {
+static int clampVol(int v) { return v < 0 ? 0 : v > 255 ? 255 : v; }
+
+// Demarre le haut-parleur (a la demande) au volume demande ; le micro est exclusif.
+static bool speakerBegin(int vol) {
+  if (sMicOn) { M5.Mic.end(); sMicOn = false; }
   M5.Mic.end();
   if (!sSpkOn) sSpkOn = M5.Speaker.begin();
-  if (sSpkOn) M5.Speaker.setVolume(sVolume);
+  if (sSpkOn) M5.Speaker.setVolume(vol);
   return sSpkOn;
 }
 
-void setVolume(int v) {
-  sVolume = v < 0 ? 0 : v > 255 ? 255 : v;
-  if (sSpkOn) M5.Speaker.setVolume(sVolume);
+void setVolumes(int notif, int voice) {
+  sVolNotif = clampVol(notif);
+  sVolVoice = clampVol(voice);
 }
 
-void beep() {
-  if (sVolume <= 0 || !speakerBegin()) return;
+void beep(int vol) {
+  vol = clampVol(vol);
+  if (vol <= 0 || !speakerBegin(vol)) return;
   M5.Speaker.tone(1000, 90);
 }
 
-static void waitPlayback(bool abortOnButton) {
+static void waitPlayback(bool abortOnButton, size_t totalMs, void (*onTick)(int, int)) {
+  uint32_t t0 = millis(), lastTick = 0;
   while (M5.Speaker.isPlaying()) {
     M5.update();
     if (abortOnButton && (M5.BtnA.wasPressed() || M5.BtnB.wasPressed())) {
       M5.Speaker.stop();
       break;
     }
+    uint32_t el = millis() - t0;
+    if (onTick && el - lastTick >= 100) { lastTick = el; onTick((int)el, (int)totalMs); }
     delay(10);
   }
 }
 
-bool playWav(const uint8_t *data, size_t len, bool abortOnButton) {
+bool playWav(const uint8_t *data, size_t len, bool abortOnButton, void (*onTick)(int posMs, int totalMs)) {
   san::WavInfo w = san::parseWav(data, len);
   if (!w.valid || w.channels != 1) return false;
   const int16_t *pcm = nullptr;
@@ -58,13 +68,13 @@ bool playWav(const uint8_t *data, size_t len, bool abortOnButton) {
   } else {
     return false;
   }
-  if (sVolume <= 0 || !speakerBegin()) {  // muet : rien a jouer
+  if (sVolVoice <= 0 || !speakerBegin(sVolVoice)) {  // muet : rien a jouer
     if (dec) heap_caps_free(dec);
     return true;
   }
   // playRaw copie par references : le buffer doit rester valide jusqu'a la fin de lecture.
   M5.Speaker.playRaw(pcm, n, w.sampleRate, false, 1, 0);
-  waitPlayback(abortOnButton);
+  waitPlayback(abortOnButton, w.sampleRate ? n * 1000 / w.sampleRate : 0, onTick);
   M5.Speaker.stop();
   if (dec) heap_caps_free(dec);
   return true;
@@ -94,11 +104,21 @@ static void soundFeed() {
 // Demande un son de nudge : soumis aux regles anti-bruit (un a la fois, 2 s mini, type le plus prioritaire).
 void requestSound(san::NudgeType type) { sSched.request(type); }
 
+static void soundBegin(san::NudgeType t) {
+  sType = t; sPos = 0; sTotal = san::nudgeSound(t).samples; sBufIdx = 0; sActive = true;
+}
+
+// Apercu (reglage du volume des notifications) : joue le son tout de suite, hors regles anti-bruit.
+void soundPreview(san::NudgeType t) {
+  if (sVolNotif <= 0 || !speakerBegin(sVolNotif)) return;
+  M5.Speaker.stop();
+  soundBegin(t);
+  soundFeed();
+}
+
 void soundTick() {
   san::NudgeType t;
-  if (sSched.poll(millis(), soundBusy(), t) && sVolume > 0 && speakerBegin()) {
-    sType = t; sPos = 0; sTotal = san::nudgeSound(t).samples; sBufIdx = 0; sActive = true;
-  }
+  if (sSched.poll(millis(), soundBusy(), t) && sVolNotif > 0 && speakerBegin(sVolNotif)) soundBegin(t);
   soundFeed();
 }
 
@@ -148,13 +168,30 @@ void housekeeping() {
   if (sSpkOn && !sActive && !M5.Speaker.isPlaying()) speakerOff();  // fin du dernier bloc : ampli et codec coupes
 }
 
+// Demarre le micro des l'appui (avant la detection de l'appui long) : la montee du codec (transitoire ssature)
+// est ainsi absorbee pendant les 500 ms d'attente. Sans effet si deja demarre.
+void micPrepare() {
+  if (sMicOn) return;
+  speakerOff();
+  sMicOn = M5.Mic.begin();
+  sMicAt = millis();
+}
+
+// Appui finalement bref (pas un enregistrement) : coupe le micro.
+void micCancel() {
+  if (!sMicOn) return;
+  M5.Mic.end();
+  sMicOn = false;
+}
+
 uint8_t *recordWav(bool (*isHeld)(), int rate, int maxSeconds, size_t *outLen, void (*onTick)(int)) {
   size_t maxSamples = (size_t)rate * maxSeconds;
   uint8_t *buf = (uint8_t *)heap_caps_malloc(44 + maxSamples * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-  if (!buf) return nullptr;
+  if (!buf) { micCancel(); return nullptr; }
   int16_t *pcm = (int16_t *)(buf + 44);
-  speakerOff();
-  if (!M5.Mic.begin()) { heap_caps_free(buf); return nullptr; }
+  if (!sMicOn) micPrepare();
+  if (!sMicOn) { heap_caps_free(buf); return nullptr; }
+  while ((uint32_t)(millis() - sMicAt) < (uint32_t)cfg::kMicSettleMs) delay(5);  // transitoire ignore
   const size_t chunk = rate / 20;  // 50 ms
   size_t pos = 0;
   uint32_t t0 = millis();
@@ -167,7 +204,9 @@ uint8_t *recordWav(bool (*isHeld)(), int rate, int maxSeconds, size_t *outLen, v
   }
   while (M5.Mic.isRecording()) delay(2);
   M5.Mic.end();
+  sMicOn = false;
   if (pos * 1000 / rate < (size_t)cfg::kRecMinMs) { heap_caps_free(buf); return nullptr; }
+  san::applyGainQ8(pcm, pos, san::micGainQ8(pcm, pos));  // +12 dB si ca ne sature pas
   san::buildWavHeader(buf, rate, pos * 2);
   *outLen = 44 + pos * 2;
   return buf;

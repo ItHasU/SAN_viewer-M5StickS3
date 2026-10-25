@@ -6,12 +6,15 @@
 #include "san_types.h"
 
 namespace audio_io {
-// Volume 0-255 applique immediatement (0 : aucun son). Memorise pour les lectures suivantes.
-void setVolume(int v);
-// Bip court d'apercu (reglage du volume), non bloquant.
-void beep();
+// Deux volumes 0-255 (0 : muet), memorises pour les lectures suivantes : notifications (sons de nudge) et vocaux (voix).
+void setVolumes(int notif, int voice);
+// Bip court d'apercu du volume des vocaux, non bloquant.
+void beep(int volume);
+// Apercu du volume des notifications : joue un son marimba immediatement (hors regles anti-bruit).
+void soundPreview(san::NudgeType type);
 // Interrompt la lecture si abortOnButton et qu'un bouton est presse. Renvoie false si format non supporte.
-bool playWav(const uint8_t *data, size_t len, bool abortOnButton = true);
+// onTick(posMs, totalMs) : appele ~10 fois par seconde pendant la lecture (ecran de lecture).
+bool playWav(const uint8_t *data, size_t len, bool abortOnButton = true, void (*onTick)(int posMs, int totalMs) = nullptr);
 // Son de nudge marimba (non bloquant, regles anti-bruit de san::SoundScheduler) : requestSound() enregistre,
 // soundTick() (via housekeeping) synthetise et lance, soundWait() bloque jusqu'a la fin (avant le deep sleep).
 void requestSound(san::NudgeType type);
@@ -27,6 +30,9 @@ void quiesce();
 // Libere le haut-parleur quand plus rien ne joue (appeler regulierement, ex. depuis la boucle principale).
 void housekeeping();
 
+// Micro : demarrer a l'appui (montee du codec absorbee), annuler si l'appui est bref.
+void micPrepare();
+void micCancel();
 // Enregistre tant que isHeld() est vrai (max maxSamples). Renvoie un buffer PSRAM : en-tete WAV (44) + PCM.
 // Libere avec heap_caps_free. outLen = taille totale. nullptr si trop court / erreur.
 uint8_t *recordWav(bool (*isHeld)(), int rate, int maxSeconds, size_t *outLen, void (*onTick)(int ms));

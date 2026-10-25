@@ -1,10 +1,12 @@
-// Firmware viewer SAN - M5StickS3. Cycle : reveil -> Wi-Fi -> /viewer/sync -> notifications -> (fenetre d'eveil) -> deep sleep.
+// Firmware viewer SAN - M5StickS3. Cycle : reveil -> Wi-Fi -> /viewer/sync -> icones / sons / vocaux -> (fenetre d'eveil) -> deep sleep.
 // Toute la logique de decision est dans lib/san_core (testee sur hote) ; ici : orchestration et E/S.
 #include <M5Unified.h>
 #include <WiFi.h>
 #include <driver/rtc_io.h>
 #include <esp_heap_caps.h>
 #include <esp_sleep.h>
+
+#include <algorithm>
 
 #include "audio_io.h"
 #include "config.h"
@@ -13,7 +15,7 @@
 #include "portal.h"
 #include "san_audio.h"
 #include "san_logic.h"
-#include "san_notify.h"
+#include "san_board.h"
 #include "san_protocol.h"
 #include "san_ui.h"
 #include "ui.h"
@@ -28,9 +30,9 @@ static struct Runtime {
   std::vector<AgentState> states;  // etats bruts (cache RTC ou derniere sync)
   std::vector<AgentState> view;    // etats suivis, ordonnes (cache de orderStates)
   bool viewStale = true;
-  NotifQueue notifs;               // notifications en attente (persistees en RTC)
   std::string base;
-  size_t sel = 0;                  // agent selectionne (cible de l'enregistrement)
+  size_t sel = 0;                  // agent selectionne (vocal, enregistrement) ; son slug est memorise en RTC
+  bool recording = false;          // enregistrement en cours : aucune auto-selection
   int battery = -1;                // niveau affiche et remonte au serveur (battery_pct)
   Charge charge = Charge::Unknown;
   uint32_t batteryAt = 0;
@@ -53,15 +55,19 @@ static const std::vector<AgentState> &view() {
   if (G.viewStale) {
     G.view = orderStates(G.cfg, G.states);
     G.viewStale = false;
-    for (size_t i = 0; i < G.view.size(); i++)  // la selection est memorisee par slug (RTC) : survit au sommeil et aux reordonnancements
-      if (G.view[i].agent == rtc.selAgent) { G.sel = i; break; }
+    G.sel = agentIndexBySlug(G.view, rtc.selAgent, G.sel);  // memorisee par slug (RTC) : survit au sommeil et aux reordonnancements
   }
   G.sel = clampAgentIndex(G.sel, G.view.size());
   return G.view;
 }
 static void invalidateView() { G.viewStale = true; G.dirty = true; }
 static void setStates(const std::vector<AgentState> &st) { G.states = st; invalidateView(); }
-static void persistNotifs() { rtcStoreNotifs(G.notifs); }
+// Selectionne l'agent `slug` (sans effet s'il n'est pas affiche).
+static void selectAgent(const std::string &slug) {
+  const auto &v = view();
+  for (size_t i = 0; i < v.size(); i++)
+    if (v[i].agent == slug) { G.sel = i; strlcpy(rtc.selAgent, slug.c_str(), sizeof rtc.selAgent); G.dirty = true; return; }
+}
 
 static void readBattery() {
   int lvl = M5.Power.getBatteryLevel();
@@ -75,31 +81,13 @@ static void readBattery() {
 
 static ui::MainView buildView() {
   ui::MainView v;
-  for (auto &n : G.notifs.latest(cfg::kNotifLines)) {
-    ui::NotifLine l;
-    if (n.sys != Sys::None) {  // etat de connexion local : jamais un agent
-      l.name = sysName(n.sys);
-      if (n.busy) l.name += "...";
-      else if (n.type == NudgeType::Done) l.name += " OK";
-      l.type = n.busy ? NudgeType::Start : n.type;
-      l.sys = n.sys; l.busy = n.busy; l.count = n.count;
-      v.notifs.push_back(l);
-      continue;
-    }
-    const AgentCfg *a = G.cfg.find(n.agent);
-    l.name = a ? a->name : n.agent;
-    l.type = n.type; l.voice = n.voice; l.high = n.high; l.count = n.count;
-    v.notifs.push_back(l);
-  }
-  v.pending = G.notifs.total();
   const auto &vw = view();
-  v.activity = summarizeActivity(vw);
-  v.scene = buildScene(vw, G.sel);
+  v.row = buildAgentRow(vw, G.sel);
   v.hasSel = !vw.empty();
   if (v.hasSel) v.selName = agentLabel(G.cfg, vw[G.sel], 18);
   v.wifiOk = WiFi.status() == WL_CONNECTED;
   v.serverOk = G.serverOk;
-  v.speakerOn = S.volume > 0;
+  v.speakerOn = S.volNotif > 0 || S.volVoice > 0;
   v.autoSleep = S.pauseS > 0;
   v.battery = G.battery;
   v.charge = G.charge;
@@ -107,25 +95,15 @@ static ui::MainView buildView() {
 }
 static void redraw() { ui::mainView(buildView()); G.dirty = false; }
 
-// ---- etat de connexion : notifications locales (jamais d'ecran plein) ----
+// ---- etat de connexion : visible dans la barre de statut (icones Wi-Fi / serveur), son d'erreur anti-bruit ----
 enum class Mode { Main, Menu };
 static Mode gMode = Mode::Main;  // ecran courant pendant l'eveil
-// La vue principale peut etre redessinee sans ecraser un autre ecran (menu, code d'appairage).
+// L'ecran principal peut etre redessine sans ecraser un autre ecran (menu, code d'appairage).
 static bool mainVisible() { return G.screenOn && gMode == Mode::Main && G.phase != Phase::Pairing; }
-static void sysShow() { if (mainVisible()) redraw(); else G.dirty = true; }
-static void sysConnecting(Sys s) {
-  if (!G.screenOn) return;  // reveil timer ecran eteint : rien a montrer
-  G.notifs.setSystem(s, SysState::Connecting, millis());
-  sysShow();
-}
-// Fin d'une tentative : remplace la ligne "en cours" par erreur / "OK" (si echec precedent) / rien.
-static void sysResult(Sys s, bool ok) {
-  uint8_t &fails = s == Sys::Wifi ? rtc.wifiFails : rtc.serverFails;
-  ConnOutcome o = connReport(fails, ok, G.screenOn);
-  if (o.show) G.notifs.setSystem(s, o.state, millis());
-  else G.notifs.clearSystem(s);
-  if (o.sound) audio_io::requestSound(NudgeType::Error);
-  sysShow();
+static void connResult(bool wifi, bool ok) {
+  uint8_t &fails = wifi ? rtc.wifiFails : rtc.serverFails;
+  if (connReportSound(fails, ok, G.screenOn)) audio_io::requestSound(NudgeType::Error);
+  if (mainVisible()) redraw(); else G.dirty = true;
 }
 static void sysTick() {
   audio_io::housekeeping();  // coupe l'ampli si un son vient de finir pendant une attente bloquante
@@ -135,9 +113,8 @@ static void sysTick() {
 // ---------------- reseau / API ----------------
 static bool ensureOnline() {
   if (G.online && WiFi.status() == WL_CONNECTED) return true;
-  sysConnecting(Sys::Wifi);
   G.online = net::wifiConnect(S, cfg::kWifiTimeoutMs, sysTick);
-  sysResult(Sys::Wifi, G.online);
+  connResult(true, G.online);
   if (G.online) {
     G.base = chooseBase(S.serverUrl.c_str(), S.lanUrl.c_str(), net::currentSsid(), S.homeSsid.c_str());
     if (G.base.rfind("https://", 0) == 0) net::ensureTime();
@@ -157,10 +134,9 @@ static bool handleAuth(int code) {
   if (httpCodeClearsToken(code)) {
     tokenClear(S);
     uint8_t ch = rtc.channel; uint8_t bs[6]; memcpy(bs, rtc.bssid, 6);
-    rtcReset();  // ack, hashes, config, notifications : tout est lie a l'ancien jeton
+    rtcReset();  // ack, hashes, config, cache des agents : tout est lie a l'ancien jeton
     rtc.channel = ch; memcpy(rtc.bssid, bs, 6);
     G.cfg = Config();
-    G.notifs = NotifQueue();
     freeClip();
     setStates({});
   }
@@ -224,35 +200,66 @@ static Fetch fetchClip(const std::string &id, const std::string &agent) {
   return Fetch::Ok;
 }
 
-static void playClip() {
-  if (!G.clip) return;
-  audio_io::playWav(G.clip, G.clipLen);  // format inconnu : rien n'est joue, la notification reste affichee
-  audio_io::speakerOff();
+// Etat d'un agent dans G.states (pastille / clips en attente), par slug.
+static AgentState *stateOf(const std::string &slug) {
+  for (auto &s : G.states) if (s.agent == slug) return &s;
+  return nullptr;
 }
 
-// Traite les evenements dans l'ordre ; renvoie le nombre d'evenements entierement traites (a acquitter).
-// Un nudge est ajoute a la file locale (puis acquitte cote serveur) ; un vocal est telecharge, ajoute, puis joue.
-static size_t processEvents(const std::vector<EventItem> &events) {
-  size_t done = 0;
-  std::vector<EventItem> alerted;
-  for (const auto &e : events) {
-    bool voice = e.kind == "voice" && e.hasClip;
-    if (voice) {
-      Fetch f = fetchClip(e.clip.id, e.agent);
-      if (f == Fetch::Failed) break;  // non acquitte : rejoue au prochain cycle
-      if (f == Fetch::Gone) { done++; continue; }
-    }
-    G.notifs.push(e.agent, e.type, voice, e.isHigh(), e.id);
-    persistNotifs();
-    screenOn();
-    redraw();
-    if (voice) playClip();
-    else alerted.push_back(e);
-    done++;
-    if (G.phase != Phase::Run) break;
+// Vocal lu : le serveur decremente voice_pending (POST /viewer/voice/:clip/played, idempotent), la pastille aussi
+// localement. Un echec reseau n'est pas bloquant : la pastille reapparaitra a la synchronisation suivante.
+static void markPlayed(const std::string &slug, const std::string &clip) {
+  if (G.online) {
+    net::Resp r(1024);
+    call(r, HTTP_METHOD_POST, voicePlayedUrl(G.base, clip));
+    handleAuth(r.code);
   }
-  for (auto &e : alerted) audio_io::requestSound(e.type);  // anti-bruit dans audio_io ; la boucle entretient
-  return done;
+  if (AgentState *s = stateOf(slug)) {
+    auto it = std::find(s->voiceClips.begin(), s->voiceClips.end(), clip);
+    if (it != s->voiceClips.end()) s->voiceClips.erase(it);
+    if (s->voicePending > 0) s->voicePending--;
+    rtcStoreStates(G.states, G.cfg);
+    invalidateView();
+  }
+}
+
+static std::string gPlayName;
+static void playTick(int ms, int total) { ui::playback(gPlayName, ms, total); }
+
+// Ecran de lecture d'un vocal : telecharge si besoin, joue (un appui l'interrompt), puis marque lu si demande.
+// Renvoie false si le clip n'a pas pu etre lu.
+static bool playVoice(const std::string &slug, const std::string &clip, bool mark) {
+  const AgentCfg *a = G.cfg.find(slug);
+  gPlayName = a ? a->name : slug;
+  screenOn();
+  if (!(G.clip && !strcmp(G.clipId, clip.c_str()))) {
+    if (!ensureOnline()) { G.dirty = true; return false; }
+    ui::message("Vocal", gPlayName, TFT_CYAN);
+    Fetch f = fetchClip(clip, slug);
+    if (f == Fetch::Gone) {
+      markPlayed(slug, clip);  // clip purge : on le retire de la liste
+      ui::message("Vocal", "Message indisponible", TFT_RED);
+      waitOrButton(1500);
+      return false;
+    }
+    if (f != Fetch::Ok) { ui::message("Vocal", "Echec du telechargement", TFT_RED); waitOrButton(1500); return false; }
+  }
+  audio_io::soundStop();
+  ui::playback(gPlayName, 0, 0);
+  audio_io::playWav(G.clip, G.clipLen, true, playTick);  // format inconnu : rien n'est joue
+  audio_io::speakerOff();
+  if (mark) markPlayed(slug, clip);
+  G.dirty = true;
+  return true;
+}
+
+// Evenements : les nudges declenchent le son marimba de leur type (regles anti-bruit dans audio_io). Le statut et
+// l'icone viennent de states[] (le serveur fixe l'etat de l'agent avec le nudge) ; les vocaux, de voice_pending_clips.
+// Les evenements "voice" sont donc simplement acquittes. Renvoie le nombre d'evenements traites (a acquitter).
+static size_t processEvents(const std::vector<EventItem> &events) {
+  for (const auto &e : events)
+    if (e.kind != "voice" && S.volNotif > 0) audio_io::requestSound(e.type);
+  return events.size();
 }
 
 // ---------------- phases ----------------
@@ -323,16 +330,27 @@ static bool doRun() {
       continue;
     }
     if (sr.hasConfig) adoptConfig(sr.config, sr.configHash);
-    ScreenDecision d = decideScreen(G.cfg, rtcPrevStatuses(), sr.states, sr.events);
+    SyncDiff d = diffStates(rtcPrevAgents(), sr.states);  // avant la mise a jour du cache RTC
     setStates(sr.states);
     rtcStoreStates(sr.states, G.cfg);
+    rtcUpdateSeen(sr.states);
     G.nextSyncS = sr.nextSyncS;
     G.serverOk = true;
-    if (d.screen) screenOn();
+    if (d.changed || !sr.events.empty()) screenOn();
+    if (!d.pick.empty() && !G.recording) selectAgent(d.pick);  // vocal > question > probleme > pret ; pas pendant un enregistrement
+    if (G.screenOn && G.dirty && mainVisible()) redraw();
     size_t n = processEvents(sr.events);
     rtc.lastAck = ackAfterProcessing(rtc.lastAck, sr.events, n);
+    // Lecture automatique des vocaux arrives (volume des vocaux non nul), dans l'ordre d'arrivee.
+    if (S.autoPlay && S.volVoice > 0 && !G.recording)
+      for (auto &va : d.arrivals)
+        for (auto &clip : va.clips) {
+          if (G.phase != Phase::Run) break;
+          selectAgent(va.agent);
+          playVoice(va.agent, clip, true);
+        }
     rtc.failures = 0;
-    if (n < sr.events.size() || !sr.hasMore || G.phase != Phase::Run) break;
+    if (!sr.hasMore || G.phase != Phase::Run) break;
   }
   return true;
 }
@@ -359,9 +377,8 @@ static bool runPhases() {
 static bool syncNow(bool verbose) {
   bool ok = false;
   if (ensureOnline()) {
-    if (verbose) sysConnecting(Sys::Server);
     ok = runPhases();
-    sysResult(Sys::Server, ok);
+    connResult(false, ok);
   }
   G.serverOk = ok;
   if (!ok && rtc.failures < 250) rtc.failures++;
@@ -382,21 +399,27 @@ static void recTick(int ms) {
 
 static void doRecord(const AgentState &s) {
   const AgentCfg *a = G.cfg.find(s.agent);
-  if (!a || !a->canSendVoice) { ui::message("Vocal", "Envoi non autorise vers cet agent", TFT_RED); waitOrButton(1500); return; }
+  if (!a || !a->canSendVoice) {
+    audio_io::micCancel();
+    ui::message("Vocal", "Envoi non autorise vers cet agent", TFT_RED); waitOrButton(1500); return;
+  }
+  G.recording = true;  // pas d'auto-selection pendant l'enregistrement
   gRecAgent = a->name;
   ui::recording(gRecAgent, 0, gRecMaxMs);
   net::wifiBegin(S);  // le Wi-Fi s'associe pendant l'enregistrement (SPEC 12.3) ; wifiConnect reprend sans relancer
   size_t len = 0;
+  // Le micro a ete demarre a l'appui (micPrepare) : transitoire du codec deja ecoule, gain +12 dB si pas de saturation.
   uint8_t *buf = audio_io::recordWav(heldFront, cfg::kRecRate, cfg::kRecMaxS, &len, recTick);
+  G.recording = false;
   if (!buf) { ui::message("Vocal", "Message trop court", TFT_ORANGE); waitOrButton(1200); return; }
-  if (!ensureOnline()) { heap_caps_free(buf); G.dirty = true; return; }  // la notification Wi-Fi dit pourquoi
+  if (!ensureOnline()) { heap_caps_free(buf); G.dirty = true; return; }  // la barre de statut dit pourquoi
   ui::message("Envoi...", gRecAgent, TFT_CYAN);
   net::Resp r(4096);
   call(r, HTTP_METHOD_POST, voiceUploadUrl(G.base, s.agent), buf, len, "audio/wav");
   heap_caps_free(buf);
   handleAuth(r.code);
-  if (r.code <= 0) { sysResult(Sys::Server, false); G.dirty = true; return; }  // transport : notification Serveur
-  if (r.ok()) { sysResult(Sys::Server, true); ui::message("Envoye", gRecAgent, TFT_GREEN); }
+  if (r.code <= 0) { connResult(false, false); G.dirty = true; return; }  // transport : serveur injoignable
+  if (r.ok()) { connResult(false, true); ui::message("Envoye", gRecAgent, TFT_GREEN); }
   else {
     ApiError e;
     ui::message("Echec envoi", parseApiError(r.text(), e) ? e.message : "HTTP " + std::to_string(r.code), TFT_RED);
@@ -404,19 +427,18 @@ static void doRecord(const AgentState &s) {
   waitOrButton(1500);
 }
 
-// Repete le dernier vocal : instantane s'il est encore en PSRAM, sinon retelechargement.
-static void doReplay() {
-  if (!G.clip) {
-    if (!rtc.lastClipId[0]) { ui::message("Reecoute", "Aucun message", TFT_ORANGE); waitOrButton(1200); return; }
-    if (!ensureOnline()) { G.dirty = true; return; }
-    ui::message("Reecoute", rtc.lastClipAgent, TFT_CYAN);
-    if (fetchClip(rtc.lastClipId, rtc.lastClipAgent) != Fetch::Ok) {
-      ui::message("Reecoute", "Message indisponible", TFT_RED);
-      waitOrButton(1500);
-      return;
-    }
+// Appui court frontal : lit le plus ancien vocal en attente de l'agent selectionne ; sans vocal en attente, reecoute
+// le dernier vocal de cet agent s'il existe.
+static void doPlayVoice(const AgentState &s) {
+  if (!s.voiceClips.empty()) { playVoice(s.agent, s.voiceClips.front(), true); return; }
+  if (s.voicePending > 0) {  // pastille connue (cache RTC) mais liste de clips pas encore recue
+    ui::message("Vocal", "Synchronisation en cours", TFT_ORANGE); waitOrButton(1200);
+    G.nextSyncAt = millis();
+    return;
   }
-  playClip();
+  if (rtc.lastClipId[0] && s.agent == rtc.lastClipAgent) { playVoice(s.agent, rtc.lastClipId, false); return; }
+  ui::message("Vocal", "Aucun vocal", TFT_ORANGE);
+  waitOrButton(1200);
 }
 
 // ---- menu ----
@@ -425,15 +447,30 @@ struct MenuCtx {
 };
 
 static void drawMenu(const MenuCtx &m) {
-  ui::menuRoot(m.st.cursor, formatVolume(S.volume), formatBrightness(S.brightness), formatPause(S.pauseS));
+  std::vector<ui::MenuRowView> rows;
+  for (size_t i = 0; i < kMenuRows; i++) {
+    ui::MenuRowView r;
+    r.item = (MenuItem)i;
+    r.label = menuLabel(r.item);
+    switch (r.item) {
+      case MenuItem::VolNotif: r.value = formatVolume(S.volNotif); r.muted = S.volNotif <= 0; break;
+      case MenuItem::VolVoice: r.value = formatVolume(S.volVoice); r.muted = S.volVoice <= 0; break;
+      case MenuItem::Brightness: r.value = formatBrightness(S.brightness); break;
+      case MenuItem::Pause: r.value = formatPause(S.pauseS); break;
+      case MenuItem::AutoPlay: r.value = formatYesNo(S.autoPlay); break;
+      default: break;
+    }
+    rows.push_back(r);
+  }
+  ui::menu(m.st.cursor, rows);
 }
 
-// Evenement de menu d'apres les boutons (aucun si rien). Frontal = defiler / retour, dessus = agir.
+// Evenement de menu d'apres les boutons (aucun si rien). Dessus = element suivant / quitter, frontal = agir.
 static bool menuEventFromButtons(MenuEvent &e) {
-  if (SAN_BTN_FRONT.wasSingleClicked()) { e = MenuEvent::FrontClick; return true; }
-  if (SAN_BTN_FRONT.wasHold()) { e = MenuEvent::FrontHold; return true; }
   if (SAN_BTN_TOP.wasClicked()) { e = MenuEvent::TopClick; return true; }
   if (SAN_BTN_TOP.wasHold()) { e = MenuEvent::TopHold; return true; }
+  if (SAN_BTN_FRONT.wasClicked()) { e = MenuEvent::FrontClick; return true; }
+  if (SAN_BTN_FRONT.wasHold()) { e = MenuEvent::FrontHold; return true; }
   return false;
 }
 
@@ -447,15 +484,13 @@ static void doWifiConfig() {
   PortalResult r = runConfigPortal(S, true);
   Serial.printf("[san] config Wi-Fi : %s\n", r == PortalResult::Saved ? "enregistree" : r == PortalResult::Cancelled ? "annulee" : "timeout");
   rtc.channel = 0;  // cache canal / BSSID invalide (le reseau a pu changer)
-  G.notifs.clearSystem(Sys::Wifi);
-  G.notifs.clearSystem(Sys::Server);
   G.nextSyncAt = millis();
   touch();
   G.dirty = true;
 }
 
-// Confirmation en deux etapes : (1) choix de la ligne (deja fait), (2) bouton du dessus maintenu kResetHoldMs
-// avec barre et compte a rebours. Relacher remet a zero ; bouton frontal ou 15 s d'inactivite = annulation.
+// Confirmation en deux etapes : (1) choix de la ligne (deja fait), (2) bouton frontal maintenu kResetHoldMs
+// avec barre et compte a rebours. Relacher remet a zero ; bouton du dessus ou 15 s d'inactivite = annulation.
 static bool confirmReset() {
   ui::resetConfirm(0, 3, false);
   uint32_t idle0 = millis(), holdStart = 0;
@@ -464,8 +499,8 @@ static bool confirmReset() {
   while (millis() - idle0 < 15000) {
     M5.update();
     audio_io::housekeeping();
-    if (SAN_BTN_FRONT.wasPressed()) return false;
-    bool pr = SAN_BTN_TOP.isPressed();
+    if (SAN_BTN_TOP.wasPressed()) return false;
+    bool pr = SAN_BTN_FRONT.isPressed();
     if (pr && !holding) { holding = true; holdStart = millis(); lastPct = -1; }
     if (!pr && holding) { holding = false; idle0 = millis(); ui::resetConfirm(0, 3, false); }
     if (holding) {
@@ -497,11 +532,17 @@ static bool confirmReset() {
 // Applique l'action du menu. Renvoie true si le menu doit se fermer.
 static bool menuApply(MenuCtx &m, MenuAct act) {
   switch (act) {
-    case MenuAct::VolumeNext:
-      S.volume = nextVolume(S.volume);
-      audio_io::setVolume(S.volume);
+    case MenuAct::VolNotifNext:
+      S.volNotif = nextVolume(S.volNotif);
+      audio_io::setVolumes(S.volNotif, S.volVoice);
       settingsSaveUi(S);
-      audio_io::beep();  // apercu sonore
+      audio_io::soundPreview(NudgeType::Notification);  // apercu : son marimba
+      break;
+    case MenuAct::VolVoiceNext:
+      S.volVoice = nextVolume(S.volVoice);
+      audio_io::setVolumes(S.volNotif, S.volVoice);
+      settingsSaveUi(S);
+      audio_io::beep(S.volVoice);  // apercu : bip
       break;
     case MenuAct::BrightnessNext:
       S.brightness = nextBrightness(S.brightness);
@@ -510,6 +551,10 @@ static bool menuApply(MenuCtx &m, MenuAct act) {
       break;
     case MenuAct::PauseNext:
       S.pauseS = nextPause(S.pauseS);
+      settingsSaveUi(S);
+      break;
+    case MenuAct::AutoPlayToggle:
+      S.autoPlay = !S.autoPlay;
       settingsSaveUi(S);
       break;
     case MenuAct::WifiConfig: doWifiConfig(); return true;
@@ -538,29 +583,37 @@ static void awakeLoop() {
     uint32_t now = millis();
 
     if (mode == Mode::Main) {
-      if (G.notifs.expire(millis())) G.dirty = true;  // "OK" de connexion : auto-acquittement
       if (S.pauseS > 0 && now - G.activity >= (uint32_t)S.pauseS * 1000u) return;
+      // Boutons : dessus = agent suivant (clic) / parametres (long) ; frontal = vocal (clic) / enregistrement (long).
+      if (SAN_BTN_FRONT.wasPressed()) {  // micro demarre des l'appui : la montee du codec passe pendant les 500 ms d'attente
+        const auto &v = view();
+        const AgentCfg *a = v.empty() ? nullptr : G.cfg.find(v[G.sel].agent);
+        if (a && a->canSendVoice) audio_io::micPrepare();
+      }
       Press p; Button b; bool ev = false;
       if (SAN_BTN_TOP.wasClicked()) { b = Button::Top; p = Press::Click; ev = true; }
       else if (SAN_BTN_TOP.wasHold()) { b = Button::Top; p = Press::Hold; ev = true; }
-      else if (SAN_BTN_FRONT.wasSingleClicked()) { b = Button::Front; p = Press::Click; ev = true; }
-      else if (SAN_BTN_FRONT.wasDoubleClicked()) { b = Button::Front; p = Press::DoubleClick; ev = true; }
+      else if (SAN_BTN_FRONT.wasClicked()) { b = Button::Front; p = Press::Click; ev = true; audio_io::micCancel(); }
       else if (SAN_BTN_FRONT.wasHold()) { b = Button::Front; p = Press::Hold; ev = true; }
       if (ev) {
         touch();
         audio_io::soundStop();  // un appui coupe le son d'alerte en cours
-        switch (mainAction(b, p, !G.notifs.empty())) {
-          case MainAction::AckLatest: G.notifs.ackLatest(); persistNotifs(); break;
+        switch (mainAction(b, p)) {
           case MainAction::NextAgent: {
             const auto &v = view();
             G.sel = nextAgentIndex(G.sel, v.size());
             if (!v.empty()) strlcpy(rtc.selAgent, v[G.sel].agent.c_str(), sizeof rtc.selAgent);
             break;
           }
-          case MainAction::Replay: doReplay(); break;
+          case MainAction::PlayVoice: {
+            const AgentState *s = view().empty() ? nullptr : &view()[G.sel];
+            if (s) { AgentState copy = *s; doPlayVoice(copy); }
+            break;
+          }
           case MainAction::Record: {
-            const auto &v = view();
-            if (!v.empty()) doRecord(v[G.sel]);
+            const AgentState *s = view().empty() ? nullptr : &view()[G.sel];
+            if (s) { AgentState copy = *s; doRecord(copy); }
+            else audio_io::micCancel();
             break;
           }
           case MainAction::OpenMenu:
@@ -634,7 +687,7 @@ static void sleepNow(int seconds) {
   esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);
   esp_sleep_enable_ext1_wakeup(mask, ESP_EXT1_WAKEUP_ANY_LOW);
   esp_sleep_enable_timer_wakeup((uint64_t)seconds * 1000000ULL);
-  Serial.printf("[san] deep sleep %d s (phase %s, %d notif.)\n", seconds, phaseName(G.phase), G.notifs.total());
+  Serial.printf("[san] deep sleep %d s (phase %s)\n", seconds, phaseName(G.phase));
   Serial.flush();
   esp_deep_sleep_start();
 }
@@ -663,7 +716,7 @@ void setup() {
   rtcInit();
   settingsLoad(S);
   audio_io::quiesce();  // ampli + codec coupes tant qu'aucun son n'est joue
-  audio_io::setVolume(S.volume);
+  audio_io::setVolumes(S.volNotif, S.volVoice);
   ui::setBrightness(S.brightness);
   esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
   G.buttonWake = cause == ESP_SLEEP_WAKEUP_EXT1;
@@ -687,7 +740,6 @@ void setup() {
 
   G.cfg = rtcLoadConfig();
   G.states = rtcLoadStates();
-  G.notifs = rtcLoadNotifs();
   G.viewStale = true;
   G.serverOk = rtc.failures == 0 && rtc.active;  // optimiste jusqu'a la premiere synchronisation
   const bool neverSleep = S.pauseS == 0;
@@ -696,7 +748,7 @@ void setup() {
   if (G.buttonWake || wantPortal || cause == ESP_SLEEP_WAKEUP_UNDEFINED || neverSleep) {
     screenOn();
     // Affichage immediat depuis le cache RTC, avant tout acces reseau.
-    redraw();  // vue principale (cache RTC ou vide) ; la connexion apparait comme notification
+    redraw();  // vue principale (cache RTC ou vide) ; l'etat reseau est dans la barre de statut
   }
 
   syncNow(true);
