@@ -28,13 +28,21 @@ pio device monitor
 | [icone] Agent        x2   <- notifications en attente,
 | [icone] Agent             <- 3 lignes max, la plus recente en haut
 | [icone] Agent                 (icone du type : start / notification / question / done / error / vocal)
-|--------------------------------------|   (sans notification : agent selectionne en grand, icone + nom)
-| cloche N | engrenage w/f | pastille+agent |  <- nb de notifications | agents en activite / suivis | agent cible
+|--------------------------------------|   (sans notification : scene animee, un pictogramme par agent suivi)
+| cloche N | engrenage w/f |        <- nb de notifications | agents en activite / suivis (aucun nom d'agent)
 | wifi  serveur  haut-parleur  veille  [batterie] 87% (eclair si charge)
 +--------------------------------------+
 ```
 
-- Plus aucun détail texte d'agent : icônes et grandes polices. `priority: high` = ligne sur fond vif.
+- Plus aucun détail texte d'agent en bas : icônes et grandes polices. Les notifications du haut gardent icône +
+  nom court de l'agent. `priority: high` = ligne sur fond vif.
+- **Scène (file de notifications vide)** : 1 pictogramme par agent suivi, sans nom (`buildScene`, `san_ui.*`) :
+  `working` = engrenage cyan qui tourne (léger rebond, phases décalées) ; à l'arrêt = pictogramme statique atténué
+  (lune grise `idle`/périmé, coche verte `done`, point d'exclamation orange `waiting`, croix rouge `error`).
+  Personne ne travaille : scène calme, respiration lente (±2 px, ~6 s). 6 agents max ; au-delà : 5 pictogrammes +
+  « +N » (la fenêtre glisse pour garder l'agent sélectionné visible). L'agent sélectionné (bouton du dessus : agent
+  suivant) est souligné discrètement. Dessin dans le canevas PSRAM (sans scintillement), animé seulement pendant la
+  fenêtre d'éveil (80 ms si activité, 120 ms au repos).
 - Activité : l'engrenage tourne et une petite barre glisse si au moins un agent est `working` ; `w/f` = agents en
   activité / agents suivis par ce viewer.
 - Statut : Wi-Fi (barré = hors ligne), serveur (barré = dernière synchronisation en échec), haut-parleur (barré =
@@ -52,7 +60,9 @@ pio device monitor
   dessus comme les autres, n'est jamais envoyée au serveur ni comptée comme agent. Ces entrées sont **éphémères** (non
   persistées en RTC) ; seuls les compteurs d'échecs consécutifs (`wifiFails`, `serverFails`) le sont. Son d'erreur :
   écran déjà allumé, ou 2e échec consécutif (une seule fois, pas à chaque réveil hors couverture) ; un réveil timer
-  reste écran éteint. Restent en plein écran : portail Wi-Fi, code d'appairage, enregistrement, vocal, agents.
+  reste écran éteint. Restent en plein écran : portail Wi-Fi (icône Wi-Fi + nom du réseau AP + barre de temps restant, sans titre ni
+  adresse), code d'appairage (code seul, en grand, avec icônes ; plus d'URL du serveur), enregistrement, vocal,
+  agents, confirmation de reset.
 
 ## Boutons
 
@@ -64,7 +74,9 @@ reset/power du PMIC n'est pas utilisable. Les deux boutons réveillent la carte 
 |---|---|---|
 | Sommeil | clic : réveil, affiche la vue principale | idem |
 | Vue principale | **clic** : acquitte la notification du haut (la plus récente) ; sans notification : agent suivant. **Appui long** : agent suivant (même avec des notifications) | **clic** : répète le dernier vocal ; **appui long** : enregistre (relâcher = envoi à l'agent sélectionné) ; **double clic** : ouvre le menu |
-| Menu (racine : Volume, Lumière, Pause, Agents, Sortir) | **clic** : modifie la ligne courante (valeur suivante ; Agents = ouvrir ; Sortir = quitter) | **clic** : ligne suivante ; **appui long** : quitter |
+| Menu (racine : Volume, Lumière, Pause, Agents, Config Wi-Fi (AP), Réinitialiser, Sortir ; 5 lignes visibles, défilement + ascenseur) | **clic** : modifie la ligne courante (valeur suivante ; Agents = ouvrir ; Config Wi-Fi = ouvrir le portail ; Réinitialiser = écran de confirmation ; Sortir = quitter) | **clic** : ligne suivante ; **appui long** : quitter |
+| Portail Wi-Fi lancé depuis le menu | **clic** : annuler | **clic** : annuler (sinon timeout 240 s) |
+| Confirmation de reset | **maintenir 3 s** : réinitialise (barre + compte à rebours ; relâcher = remise à zéro) | **clic** : annuler (15 s d'inactivité = annulation) |
 | Menu > Agents (liste cochable + ligne « Enregistrer ») | **clic** : coche/décoche (sur « Enregistrer » : sauvegarde) ; **appui long** : muet on/off de l'agent | **clic** : ligne suivante ; **appui long** : retour sans enregistrer |
 | Enregistrement / lecture | un appui coupe la lecture ou le son en cours | relâcher termine l'enregistrement |
 | Démarrage (reset) | **maintenu 3 s** : portail Wi-Fi (jamais sur réveil timer) | - |
@@ -84,6 +96,17 @@ modem) et se synchronise toutes les `next_sync_s` secondes. Sinon : après le d�
 et veille profonde (réveil timer `next_sync_s`, défaut 60, borné 10-3600, backoff en échec, ou bouton). Pendant la
 fenêtre d'éveil, la carte se resynchronise aussi à chaque `next_sync_s`.
 
+**Config Wi-Fi (AP)** : coupe la connexion et ouvre le portail WiFiManager (AP `SAN-Viewer-XXXX`) sans redémarrer ;
+enregistré, annulé (clic) ou timeout (240 s), la carte reprend aussitôt son fonctionnement normal et se resynchronise.
+Annuler ou le timeout ne modifie rien. Au démarrage, le portail (premier démarrage ou bouton du dessus 3 s) n'est
+annulable que si une configuration existe déjà.
+
+**Réinitialiser** : choisir la ligne puis **maintenir le bouton du dessus 3 s** (barre + compte à rebours ; relâcher
+remet à zéro, bouton frontal = annuler). Efface la NVS (Wi-Fi, URL serveur, jeton, réglages) et l'état RTC (file de
+notifications, hashes, caches), journalise `[san] REINITIALISATION` sur le port série, puis redémarre en mode
+portail (premier démarrage). Le serveur n'est pas modifié : la carte réapparaît comme nouvelle, l'ancien
+enregistrement reste à révoquer par l'administrateur.
+
 Les agents visibles sur l'écran sont ceux suivis (abonnements) ; la sélection des agents se fait dans le menu
 (mode `manual` ; en mode `auto`, seul le muet est modifiable). `PUT /viewer/config` avec gestion du 409.
 
@@ -93,7 +116,8 @@ Les agents visibles sur l'écran sont ceux suivis (abonnements) ; la sélection 
    `SAN-Viewer-XXXX` (portail WiFiManager, `192.168.4.1`).
 2. Choisir le Wi-Fi et renseigner : **URL du serveur** (ex. `https://agents.example.org`), *URL LAN*
    (optionnelle, ex. `http://nas:3000`, utilisée si la carte est sur le SSID domestique) et *SSID domestique*.
-3. La carte s'enregistre (`POST /device/register`) et affiche le **code d'appairage** (ex. `K7-42`).
+3. La carte s'enregistre (`POST /device/register`) et affiche le **code d'appairage** (ex. `K7-42`, seul, en grand,
+   tant que la carte n'est pas activée).
    Un administrateur l'active dans l'interface web ; la carte passe alors en fonctionnement normal.
 
 Stockage : NVS (jeton, URLs, Wi-Fi, SSID domestique, réglages volume/lumière/pause) ; RTC memory (dernier événement acquitté, file de notifications, hashes de

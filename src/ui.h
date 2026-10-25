@@ -14,7 +14,11 @@ void begin();
 void backlightOn();
 void backlightOff();
 void message(const char *title, const std::string &text, uint16_t color = 0xFFFF);
-void pairing(const std::string &code, const std::string &url);
+void pairing(const std::string &code);  // code d'appairage seul, en grand
+// Portail Wi-Fi (point d'acces) : icone Wi-Fi + nom du reseau ; barre = temps restant avant abandon (0-100).
+void portal(const std::string &apName, int remainingPct);
+// Confirmation de reinitialisation : barre de maintien (0-100) et compte a rebours ; holding = bouton enfonce.
+void resetConfirm(int progressPct, int secondsLeft, bool holding);
 // Ligne de notification (zone du haut).
 struct NotifLine {
   std::string name;
@@ -29,16 +33,13 @@ struct MainView {
   std::vector<NotifLine> notifs;  // les plus recentes d'abord (max cfg::kNotifLines affichees)
   int pending = 0;                // total en attente
   san::Activity activity;
-  bool hasSelected = false;       // agent cible (selectionne) : pastille + nom ; en grand s'il n'y a pas de notification
-  std::string selName, selStatus;
-  bool selStale = false;
-  int selProgress = -1;
+  san::Scene scene;               // sans notification : un pictogramme par agent suivi (aucun nom)
   bool wifiOk = false, serverOk = false, speakerOn = true, autoSleep = true;
   int battery = -1;
   san::Charge charge = san::Charge::Unknown;
 };
 void mainView(const MainView &v);
-// Anime l'engrenage/la barre d'activite ; appel frequent, sans effet si rien ne travaille.
+// Anime la scene / l'engrenage / la barre d'activite ; appel frequent, sans effet si rien a animer.
 void mainTick();
 void stopAnim();
 void setBrightness(int b);  // 5-255, applique immediatement et memorise pour backlightOn

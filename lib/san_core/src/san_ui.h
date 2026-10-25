@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "san_logic.h"
 #include "san_types.h"
 
 namespace san {
@@ -38,6 +39,25 @@ Activity summarizeActivity(const std::vector<AgentState> &states);
 size_t nextAgentIndex(size_t cur, size_t count);
 size_t clampAgentIndex(size_t cur, size_t count);
 
+// ---- Scene principale (aucune notification) : un pictogramme par agent suivi ----
+constexpr size_t kSceneMax = 6;  // emplacements au maximum (le dernier devient "+N" au-dela)
+struct SceneAgent {
+  Icon icon;       // pictogramme d'etat (statusIcon)
+  uint16_t color;  // couleur pleine RGB565 ; l'affichage l'attenue si !animated
+  bool animated;   // working : anime ; sinon statique et attenue
+  bool selected;   // agent cible (souligne discretement, sans nom)
+};
+struct Scene {
+  std::vector<SceneAgent> agents;  // emplacements affiches, dans l'ordre
+  int more = 0;                    // agents non affiches ("+N" si > 0)
+  bool calm = true;                // personne ne travaille : respiration lente
+};
+// `states` = etats suivis ordonnes (orderStates). Plus de maxShown agents : maxShown-1 emplacements + "+N" ;
+// la fenetre glisse pour que l'agent selectionne reste visible.
+Scene buildScene(const std::vector<AgentState> &states, size_t sel, size_t maxShown = kSceneMax);
+// Decalage vertical (-2..2 px) de la respiration lente, periode 48 images.
+int sceneBreath(uint32_t frame);
+
 // ---- Batterie ----
 enum class Charge { Unknown, Discharging, Charging };
 struct BatteryStyle {
@@ -58,11 +78,20 @@ MainAction mainAction(Button b, Press p, bool hasNotifications);
 
 // ---- Machine a etats du menu ----
 enum class MenuScreen { Root, Agents };
-enum class MenuItem { Volume, Brightness, Pause, Agents, Exit };
-constexpr size_t kMenuRootRows = 5;
+enum class MenuItem { Volume, Brightness, Pause, Agents, WifiConfig, Reset, Exit };
+constexpr size_t kMenuRootRows = 7;
+// Premiere ligne visible d'une liste de `total` lignes dont `visible` tiennent a l'ecran (le curseur reste visible).
+size_t menuFirstRow(size_t cursor, size_t total, size_t visible);
+// Reinitialisation : appui maintenu kResetHoldMs sur le bouton du dessus (compte a rebours), annulable.
+constexpr uint32_t kResetHoldMs = 3000;
+int resetProgress(uint32_t heldMs);       // 0..100
+int resetSecondsLeft(uint32_t heldMs);    // 3, 2, 1, 0
+inline bool resetConfirmed(uint32_t heldMs) { return heldMs >= kResetHoldMs; }
 enum class MenuEvent { FrontClick, FrontHold, TopClick, TopHold, Idle };
 enum class MenuAct {
   None, Redraw, VolumeNext, BrightnessNext, PauseNext,
+  WifiConfig,    // portail Wi-Fi (point d'acces) pour la configuration
+  AskReset,      // demande de reinitialisation : l'appelant ouvre l'ecran de confirmation (appui maintenu)
   OpenAgents,    // l'appelant charge la config puis appelle menuEnterAgents
   ToggleAgent, ToggleMute, SaveAgents, Close
 };

@@ -64,6 +64,44 @@ size_t nextAgentIndex(size_t cur, size_t count) {
   return (clampAgentIndex(cur, count) + 1) % count;
 }
 
+Scene buildScene(const std::vector<AgentState> &states, size_t sel, size_t maxShown) {
+  Scene sc;
+  if (maxShown < 2) maxShown = 2;
+  size_t n = states.size(), first = 0, count = n;
+  if (n > maxShown) {
+    count = maxShown - 1;
+    sel = clampAgentIndex(sel, n);
+    if (sel >= count) first = sel - count + 1;
+    sc.more = (int)(n - count);
+  }
+  for (size_t i = first; i < first + count && i < n; i++) {
+    IconStyle st = statusIcon(states[i].status, states[i].stale);
+    bool working = st.icon == Icon::Working;
+    sc.agents.push_back({st.icon, st.color, working, i == sel});
+    if (working) sc.calm = false;
+  }
+  // "+N" masque aussi des agents qui travaillent : ils comptent pour l'animation
+  for (size_t i = 0; i < n; i++)
+    if (!(i >= first && i < first + count) && statusIcon(states[i].status, states[i].stale).icon == Icon::Working) sc.calm = false;
+  return sc;
+}
+
+int sceneBreath(uint32_t frame) {
+  int p = (int)(frame % 48), tri = p < 24 ? p : 48 - p;
+  return tri * 4 / 24 - 2;
+}
+
+size_t menuFirstRow(size_t cursor, size_t total, size_t visible) {
+  if (total <= visible || cursor < visible) return 0;
+  size_t first = cursor - visible + 1;
+  return first + visible > total ? total - visible : first;
+}
+int resetProgress(uint32_t heldMs) { return heldMs >= kResetHoldMs ? 100 : (int)(heldMs * 100 / kResetHoldMs); }
+int resetSecondsLeft(uint32_t heldMs) {
+  if (heldMs >= kResetHoldMs) return 0;
+  return (int)((kResetHoldMs - heldMs + 999) / 1000);
+}
+
 BatteryStyle batteryStyle(int level, Charge charge) {
   BatteryStyle b{-1, 0x7BEF, false, false};
   if (level >= 0 && level <= 100) b.level = level;
@@ -118,6 +156,8 @@ MenuAct menuStep(MenuState &m, MenuEvent e) {
         case MenuItem::Brightness: return MenuAct::BrightnessNext;
         case MenuItem::Pause: return MenuAct::PauseNext;
         case MenuItem::Agents: return MenuAct::OpenAgents;
+        case MenuItem::WifiConfig: return MenuAct::WifiConfig;
+        case MenuItem::Reset: return MenuAct::AskReset;
         case MenuItem::Exit: return MenuAct::Close;
       }
     }

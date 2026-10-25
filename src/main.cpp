@@ -89,14 +89,7 @@ static ui::MainView buildView() {
   v.pending = G.notifs.total();
   const auto &vw = view();
   v.activity = summarizeActivity(vw);
-  if (!vw.empty()) {
-    const AgentState &s = vw[G.sel];
-    v.hasSelected = true;
-    v.selName = s.name.empty() ? s.agent : s.name;
-    v.selStatus = s.status;
-    v.selStale = s.stale;
-    v.selProgress = s.progress;
-  }
+  v.scene = buildScene(vw, G.sel);
   v.wifiOk = WiFi.status() == WL_CONNECTED;
   v.serverOk = G.serverOk;
   v.speakerOn = S.volume > 0;
@@ -295,7 +288,7 @@ static bool pollStatus() {
 
 static bool doPairing() {
   bool shown = G.screenOn || G.buttonWake;
-  if (shown) { screenOn(); ui::pairing(rtc.pairingCode, S.serverUrl.c_str()); }
+  if (shown) { screenOn(); ui::pairing(rtc.pairingCode); }
   uint32_t t0 = millis();
   while (true) {
     if (!pollStatus()) return false;
@@ -494,6 +487,63 @@ static bool menuEventFromButtons(MenuEvent &e) {
   return false;
 }
 
+// Config Wi-Fi depuis le menu : coupe la connexion, ouvre le portail (AP) sans redemarrer. Au retour (enregistre,
+// annule ou timeout) la carte reprend son fonctionnement normal : nouvelle synchronisation immediate.
+static void doWifiConfig() {
+  Serial.println("[san] config Wi-Fi (AP) demandee depuis le menu");
+  audio_io::soundStop();
+  net::wifiOff();
+  G.online = false;
+  PortalResult r = runConfigPortal(S, true);
+  Serial.printf("[san] config Wi-Fi : %s\n", r == PortalResult::Saved ? "enregistree" : r == PortalResult::Cancelled ? "annulee" : "timeout");
+  rtc.channel = 0;  // cache canal / BSSID invalide (le reseau a pu changer)
+  G.notifs.clearSystem(Sys::Wifi);
+  G.notifs.clearSystem(Sys::Server);
+  G.nextSyncAt = millis();
+  touch();
+  G.dirty = true;
+}
+
+// Confirmation en deux etapes : (1) choix de la ligne (deja fait), (2) bouton du dessus maintenu kResetHoldMs
+// avec barre et compte a rebours. Relacher remet a zero ; bouton frontal ou 15 s d'inactivite = annulation.
+static bool confirmReset() {
+  ui::resetConfirm(0, 3, false);
+  uint32_t idle0 = millis(), holdStart = 0;
+  bool holding = false;
+  int lastPct = -1;
+  while (millis() - idle0 < 15000) {
+    M5.update();
+    audio_io::housekeeping();
+    if (SAN_BTN_FRONT.wasPressed()) return false;
+    bool pr = SAN_BTN_TOP.isPressed();
+    if (pr && !holding) { holding = true; holdStart = millis(); lastPct = -1; }
+    if (!pr && holding) { holding = false; idle0 = millis(); ui::resetConfirm(0, 3, false); }
+    if (holding) {
+      uint32_t held = millis() - holdStart;
+      if (resetConfirmed(held)) return true;
+      int pct = resetProgress(held);
+      if (pct != lastPct) { lastPct = pct; ui::resetConfirm(pct, resetSecondsLeft(held), true); }
+    }
+    delay(15);
+  }
+  return false;
+}
+
+// Reinitialisation d'usine : NVS (Wi-Fi, URL, jeton, reglages) + RTC (file, hashes, cache), puis redemarrage.
+// Le serveur n'est pas modifie : l'ancien enregistrement reste a revoquer par l'administrateur.
+[[noreturn]] static void doFactoryReset() {
+  Serial.println("[san] REINITIALISATION : effacement NVS + RTC, redemarrage en mode portail");
+  audio_io::soundStop();
+  settingsEraseAll(S);
+  rtcReset();
+  ui::message("Reinitialise", "Redemarrage...", TFT_RED);
+  delay(1200);
+  net::wifiOff();
+  Serial.flush();
+  ESP.restart();
+  while (true) delay(1000);
+}
+
 // Applique l'action du menu. Renvoie true si le menu doit se fermer.
 static bool menuApply(MenuCtx &m, MenuAct act) {
   switch (act) {
@@ -515,6 +565,10 @@ static bool menuApply(MenuCtx &m, MenuAct act) {
     case MenuAct::OpenAgents:
       if (menuLoadConfig(m)) menuEnterAgents(m.st, m.work.agents.size());
       else { ui::message("Agents", m.note, TFT_ORANGE); waitOrButton(1500); m.note.clear(); }
+      break;
+    case MenuAct::WifiConfig: doWifiConfig(); return true;
+    case MenuAct::AskReset:
+      if (confirmReset()) doFactoryReset();
       break;
     case MenuAct::ToggleAgent: toggleSubscribed(m.work, m.st.cursor); break;
     case MenuAct::ToggleMute: toggleMuted(m.work, m.st.cursor); break;
@@ -674,14 +728,17 @@ void setup() {
   // Portail : premier demarrage sans config, ou bouton du dessus maintenu 3 s au demarrage (hors reveil timer).
   bool wantPortal = !S.configured() || (cause != ESP_SLEEP_WAKEUP_TIMER && portalRequested());
   if (wantPortal) {
-    if (!runConfigPortal(S)) {
+    bool first = !S.configured();
+    PortalResult pr = runConfigPortal(S, !first);  // annulable seulement si une config existe deja
+    if (pr == PortalResult::Saved) {
+      rtcReset();
+    } else if (first) {
       ui::message("Configuration", "Non terminee. Nouvel essai au prochain reveil.", TFT_RED);
       G.screenOn = true;
       delay(3000);
       G.phase = Phase::Boot;
       sleepNow(600);
-    }
-    rtcReset();
+    }  // sinon : annule / timeout avec une config valide : fonctionnement normal
   }
 
   G.cfg = rtcLoadConfig();

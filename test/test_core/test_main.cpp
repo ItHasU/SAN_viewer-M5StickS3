@@ -876,6 +876,11 @@ void test_menu_root() {
   menuStep(m, MenuEvent::FrontClick);
   TEST_ASSERT_TRUE(menuStep(m, MenuEvent::TopClick) == MenuAct::OpenAgents);
   menuStep(m, MenuEvent::FrontClick);
+  TEST_ASSERT_TRUE(menuStep(m, MenuEvent::TopClick) == MenuAct::WifiConfig);
+  menuStep(m, MenuEvent::FrontClick);
+  TEST_ASSERT_TRUE(menuStep(m, MenuEvent::TopClick) == MenuAct::AskReset);
+  TEST_ASSERT_TRUE(menuStep(m, MenuEvent::TopHold) == MenuAct::None);  // jamais de reset direct
+  menuStep(m, MenuEvent::FrontClick);
   TEST_ASSERT_TRUE(menuStep(m, MenuEvent::TopClick) == MenuAct::Close);
   menuStep(m, MenuEvent::FrontClick);  // boucle
   TEST_ASSERT_EQUAL(0, (int)m.cursor);
@@ -907,6 +912,84 @@ void test_menu_agents() {
   menuEnterAgents(m, 0);  // aucun agent : seule la ligne Enregistrer
   TEST_ASSERT_EQUAL(1, (int)m.rows());
   TEST_ASSERT_TRUE(menuStep(m, MenuEvent::Idle) == MenuAct::Close);
+}
+
+static AgentState mkAgent(const char *slug, const char *status, bool stale = false) {
+  AgentState a; a.agent = slug; a.name = slug; a.status = status; a.stale = stale;
+  return a;
+}
+
+void test_scene_styles() {
+  std::vector<AgentState> st = {mkAgent("a", "working"), mkAgent("b", "idle"), mkAgent("c", "done"),
+                                mkAgent("d", "waiting"), mkAgent("e", "working", true)};
+  Scene s = buildScene(st, 2);
+  TEST_ASSERT_EQUAL(5, (int)s.agents.size());
+  TEST_ASSERT_EQUAL(0, s.more);
+  TEST_ASSERT_FALSE(s.calm);
+  TEST_ASSERT_TRUE(s.agents[0].animated && s.agents[0].icon == Icon::Working && s.agents[0].color == 0x07FF);
+  TEST_ASSERT_TRUE(!s.agents[1].animated && s.agents[1].icon == Icon::Idle);
+  TEST_ASSERT_TRUE(!s.agents[2].animated && s.agents[2].icon == Icon::Done);
+  TEST_ASSERT_TRUE(!s.agents[3].animated && s.agents[3].icon == Icon::Waiting);
+  TEST_ASSERT_TRUE(!s.agents[4].animated && s.agents[4].icon == Icon::Stale);  // perime : pas anime
+  TEST_ASSERT_TRUE(s.agents[2].selected && !s.agents[0].selected);
+}
+
+void test_scene_calm_and_empty() {
+  Scene e = buildScene({}, 0);
+  TEST_ASSERT_TRUE(e.agents.empty() && e.calm && e.more == 0);
+  Scene c = buildScene({mkAgent("a", "idle"), mkAgent("b", "done")}, 0);
+  TEST_ASSERT_TRUE(c.calm);
+}
+
+void test_scene_grouping() {
+  std::vector<AgentState> st;
+  for (int i = 0; i < 9; i++) st.push_back(mkAgent(("a" + std::to_string(i)).c_str(), "idle"));
+  Scene s = buildScene(st, 0);
+  TEST_ASSERT_EQUAL(5, (int)s.agents.size());  // 5 emplacements + "+4"
+  TEST_ASSERT_EQUAL(4, s.more);
+  TEST_ASSERT_TRUE(s.agents[0].selected);
+  s = buildScene(st, 8);  // selection hors fenetre : la fenetre glisse
+  TEST_ASSERT_EQUAL(5, (int)s.agents.size());
+  TEST_ASSERT_EQUAL(4, s.more);
+  TEST_ASSERT_TRUE(s.agents[4].selected);
+  std::vector<AgentState> six(st.begin(), st.begin() + 6);
+  s = buildScene(six, 0);
+  TEST_ASSERT_EQUAL(6, (int)s.agents.size());  // 6 tiennent : pas de "+N"
+  TEST_ASSERT_EQUAL(0, s.more);
+  // un agent qui travaille cache derriere "+N" empeche quand meme la scene d'etre calme
+  st[8].status = "working";
+  s = buildScene(st, 0);
+  TEST_ASSERT_FALSE(s.calm);
+}
+
+void test_scene_breath_range() {
+  int mn = 9, mx = -9;
+  for (uint32_t f = 0; f < 200; f++) { int b = sceneBreath(f); if (b < mn) mn = b; if (b > mx) mx = b; }
+  TEST_ASSERT_EQUAL(-2, mn);
+  TEST_ASSERT_EQUAL(2, mx);
+  TEST_ASSERT_EQUAL(sceneBreath(5), sceneBreath(53));
+}
+
+void test_menu_scroll_and_reset_hold() {
+  TEST_ASSERT_EQUAL(0, (int)menuFirstRow(0, 7, 5));
+  TEST_ASSERT_EQUAL(0, (int)menuFirstRow(4, 7, 5));
+  TEST_ASSERT_EQUAL(1, (int)menuFirstRow(5, 7, 5));
+  TEST_ASSERT_EQUAL(2, (int)menuFirstRow(6, 7, 5));
+  TEST_ASSERT_EQUAL(0, (int)menuFirstRow(3, 4, 5));
+  TEST_ASSERT_EQUAL(0, resetProgress(0));
+  TEST_ASSERT_EQUAL(50, resetProgress(1500));
+  TEST_ASSERT_EQUAL(100, resetProgress(5000));
+  TEST_ASSERT_EQUAL(3, resetSecondsLeft(0));
+  TEST_ASSERT_EQUAL(2, resetSecondsLeft(1000));
+  TEST_ASSERT_EQUAL(1, resetSecondsLeft(2999));
+  TEST_ASSERT_EQUAL(0, resetSecondsLeft(3000));
+  TEST_ASSERT_FALSE(resetConfirmed(2999));
+  TEST_ASSERT_TRUE(resetConfirmed(3000));
+  // l'entree Reinitialiser n'ouvre jamais la confirmation par un simple defilement
+  MenuState m;
+  for (int i = 0; i < 5; i++) menuStep(m, MenuEvent::FrontClick);
+  TEST_ASSERT_TRUE(m.item() == MenuItem::Reset);
+  TEST_ASSERT_TRUE(menuStep(m, MenuEvent::FrontClick) == MenuAct::Redraw);
 }
 
 int main(int, char **) {
@@ -964,5 +1047,10 @@ int main(int, char **) {
   RUN_TEST(test_main_actions);
   RUN_TEST(test_menu_root);
   RUN_TEST(test_menu_agents);
+  RUN_TEST(test_scene_styles);
+  RUN_TEST(test_scene_calm_and_empty);
+  RUN_TEST(test_scene_grouping);
+  RUN_TEST(test_scene_breath_range);
+  RUN_TEST(test_menu_scroll_and_reset_hold);
   return UNITY_END();
 }

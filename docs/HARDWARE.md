@@ -115,6 +115,13 @@ USB disparaît pendant le deep sleep), serveur SAN en Docker (compose standalone
 
 Évolution suivante (voir README, « Boutons ») : vue principale à icônes (notifications en haut, activité et statut en bas), file de notifications, menu de réglages (volume, lumière, pause, agents), batterie avec éclair de charge.
 
+Ajouts non testés sur carte (à valider) : scène animée sans notification (un pictogramme par agent, `working` = engrenage
+cyan, autres atténués, « +N » au-delà de 6), menu à 7 lignes avec défilement, **Config Wi-Fi (AP)** (portail WiFiManager
+non bloquant lancé depuis le menu, annulable au clic, timeout 240 s, sans redémarrage) et **Réinitialiser** (maintien 3 s
+du bouton du dessus, annulable au bouton frontal : efface NVS + RTC puis redémarre en portail ; journal série
+`[san] REINITIALISATION`). Écrans de pairing (code seul) et de portail (icône Wi-Fi + nom de l'AP) simplifiés. À vérifier :
+fluidité de l'animation, état du Wi-Fi/STA après un portail annulé, aucune consommation excessive en fenêtre d'éveil.
+
 Retours d'usage intégrés : écran en paysage (rotation 1, bouton latéral B sur le dessus, bouton frontal A sur la face avant ; affectation modifiable dans `src/config.h`), police x2, pictogrammes plutôt
 que texte, sons distincts par type de nudge (`start`, `notification`, `question`, `done`, `error`), animation de
 calcul sans pourcentage. À valider à l'usage : les 4 autres types de nudge (rendu et sons), le volume 230 sur

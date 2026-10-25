@@ -194,20 +194,17 @@ void message(const char *title, const std::string &text, uint16_t color) {
   d.print(san::truncateChars(text, 54).c_str());
 }
 
-void pairing(const std::string &code, const std::string &url) {
+void pairing(const std::string &code) {
   gAnim = false;
   auto &d = (*T);
   d.fillScreen(TFT_BLACK);
-  d.fillRect(0, 0, d.width(), 36, TFT_ORANGE);
-  iconExclaim(24, 18, 15, TFT_BLACK);
-  iconWifi(68, 18, 17, TFT_BLACK);
+  d.fillRect(0, 0, d.width(), 44, TFT_ORANGE);
+  iconExclaim(34, 22, 17, TFT_BLACK);
+  iconWifi(80, 22, 19, TFT_BLACK);
   textStyle(kFont40, TFT_YELLOW, TFT_BLACK);
-  d.setTextDatum(top_center);
-  d.drawString(code.c_str(), d.width() / 2, 44);
+  d.setTextDatum(middle_center);
+  d.drawString(code.c_str(), d.width() / 2, 92);
   d.setTextDatum(top_left);
-  textStyle(kFont20, TFT_LIGHTGREY, TFT_BLACK);
-  d.setCursor(4, 100);
-  d.print(san::truncateChars(url, 40).c_str());
 }
 
 // ---------------------------------------------------------------- icones supplementaires
@@ -274,9 +271,47 @@ static void iconServer(int cx, int cy, int r, uint16_t fg, bool ok);
 // ---------------------------------------------------------------- vue principale
 static M5Canvas gCv(&M5.Display);
 static bool gCvTried = false;
-static uint32_t gAnimLast = 0, gAnimFrame = 0;
+static uint32_t gAnimLast = 0, gAnimFrame = 0, gAnimPeriod = 80;
 static MainView gLast;
 static bool gHaveLast = false;
+
+// Attenue une couleur RGB565 de moitie (agents a l'arret).
+static uint16_t fade(uint16_t c) { return (uint16_t)((c >> 1) & 0x7BEF); }
+
+// Scene sans notification : un pictogramme par agent suivi (zone 0..75), sans aucun nom.
+// working : engrenage cyan qui tourne ; a l'arret : pictogramme statique attenue ; calme : respiration lente.
+static void drawScene(lgfx::LovyanGFX &d, const san::Scene &sc, uint32_t frame) {
+  const int W = d.width(), H = 76;
+  int br = sc.calm ? san::sceneBreath(frame) : 0;
+  size_t n = sc.agents.size();
+  if (n == 0) {  // aucun agent suivi : lune calme
+    iconMoon(W / 2, H / 2 + br, 28, TFT_DARKGREY, TFT_BLACK);
+    return;
+  }
+  size_t slots = n + (sc.more > 0 ? 1 : 0);
+  int r = slots <= 2 ? 26 : slots <= 3 ? 22 : slots <= 4 ? 18 : 15;
+  int slotW = W / (int)slots > 2 * r + 12 ? 2 * r + 12 : W / (int)slots;
+  int x0 = (W - slotW * (int)slots) / 2 + slotW / 2;
+  int cy = H / 2 - 4;
+  for (size_t i = 0; i < n; i++) {
+    const auto &a = sc.agents[i];
+    int cx = x0 + (int)i * slotW;
+    int y = cy + (a.animated ? (int)(sinf(frame * 0.35f + i * 1.7f) * 2.0f) : br);
+    if (a.animated) iconGear(d, cx, y, r, a.color, TFT_BLACK, frame * 0.12f + i * 0.9f);
+    else if (a.icon == san::Icon::Idle || a.icon == san::Icon::Stale) iconStatus(a.icon, cx, y, r, a.color, TFT_BLACK);  // deja gris
+    else iconStatus(a.icon, cx, y, r, fade(a.color), TFT_BLACK);
+    if (a.selected && slots > 1) {  // soulignement discret de l'agent cible
+      int uw = r * 2 * 6 / 10;
+      d.fillRoundRect(cx - uw / 2, cy + r + 8, uw, 3, 1, TFT_LIGHTGREY);
+    }
+  }
+  if (sc.more > 0) {
+    textStyle(kFont24, TFT_LIGHTGREY, TFT_BLACK);
+    d.setTextDatum(middle_center);
+    d.drawString(("+" + std::to_string(sc.more)).c_str(), x0 + (int)n * slotW, cy + br);
+    d.setTextDatum(top_left);
+  }
+}
 
 static void drawMain(const MainView &v, uint32_t frame) {
   auto &d = *T;
@@ -312,20 +347,8 @@ static void drawMain(const MainView &v, uint32_t frame) {
         d.setTextDatum(top_left);
       }
     }
-  } else if (v.hasSelected) {  // pas de notification : l'agent selectionne en grand (icone + nom, sans detail)
-    san::IconStyle st = san::statusIcon(v.selStatus, v.selStale);
-    if (st.icon == san::Icon::Working) iconGear(d, 34, 34, 28, st.color, TFT_BLACK, frame * 0.12f);
-    else iconStatus(st.icon, 34, 34, 28, st.color, TFT_BLACK);
-    textStyle(kFont24, TFT_WHITE, TFT_BLACK);
-    d.setCursor(76, 14);
-    d.print(san::truncateChars(v.selName, 10).c_str());
-    if (v.selProgress >= 0) {
-      int bw = W - 76 - 8, p = v.selProgress > 100 ? 100 : v.selProgress;
-      d.drawRoundRect(76, 46, bw, 14, 4, TFT_WHITE);
-      d.fillRoundRect(78, 48, (bw - 4) * p / 100, 10, 3, st.color);
-    }
   } else {
-    iconMoon(34, 34, 28, TFT_DARKGREY, TFT_BLACK);
+    drawScene(d, v.scene, frame);
   }
   d.drawFastHLine(0, 76, W, 0x39E7);
   // ---- zone d'activite (ligne A)
@@ -345,13 +368,6 @@ static void drawMain(const MainView &v, uint32_t frame) {
     d.drawFastHLine(bx, ay + 16, bw, 0x39E7);
     int x0 = x < bx ? bx : x, x1 = x + 20 > bx + bw ? bx + bw : x + 20;
     if (x1 > x0) d.fillRect(x0, ay + 15, x1 - x0, 3, TFT_CYAN);
-  }
-  if (v.hasSelected) {  // agent cible (enregistrement) : pastille d'etat + nom
-    san::IconStyle st = san::statusIcon(v.selStatus, v.selStale);
-    d.fillCircle(166, ay, 8, st.color);
-    textStyle(kFont20, TFT_WHITE, TFT_BLACK);
-    d.setCursor(180, ay - 10);
-    d.print(san::truncateChars(v.selName, 5).c_str());
   }
   // ---- zone de statut (ligne B)
   const int by = 121;
@@ -391,7 +407,8 @@ void mainView(const MainView &v) {
   gHaveLast = true;
   bool busy = false;
   for (auto &n : v.notifs) busy = busy || n.busy;
-  gAnim = busy || v.activity.working > 0 || (v.notifs.empty() && v.hasSelected && v.selStatus == "working" && !v.selStale);
+  gAnim = busy || v.activity.working > 0 || v.notifs.empty();  // scene : respiration lente meme au repos
+  gAnimPeriod = (busy || v.activity.working > 0) ? 80 : 120;
   presentMain(v);
 }
 
@@ -399,7 +416,7 @@ void mainView(const MainView &v) {
 void mainTick() {
   if (!gAnim || !gHaveLast) return;
   uint32_t now = millis();
-  if (now - gAnimLast < 80) return;
+  if (now - gAnimLast < gAnimPeriod) return;
   gAnimLast = now;
   gAnimFrame++;
   presentMain(gLast);
@@ -434,33 +451,83 @@ void recording(const std::string &agentName, int ms, int maxMs) {
   if (maxMs > 0) d.fillRoundRect(6, 110, (d.width() - 12) * (ms > maxMs ? maxMs : ms) / maxMs, 16, 4, TFT_RED);
 }
 
+void portal(const std::string &apName, int remainingPct) {
+  gAnim = false;
+  auto &d = (*T);
+  d.fillScreen(TFT_BLACK);
+  d.fillRect(0, 0, d.width(), 44, TFT_YELLOW);
+  iconWifi(d.width() / 2, 22, 19, TFT_BLACK);
+  textStyle(kFont24, TFT_WHITE, TFT_BLACK);
+  d.setTextDatum(middle_center);
+  d.drawString(apName.c_str(), d.width() / 2, 82);
+  d.setTextDatum(top_left);
+  if (remainingPct < 0) remainingPct = 0;
+  if (remainingPct > 100) remainingPct = 100;
+  d.drawRoundRect(10, 114, d.width() - 20, 10, 4, TFT_DARKGREY);
+  if (remainingPct) d.fillRoundRect(12, 116, (d.width() - 24) * remainingPct / 100, 6, 2, TFT_YELLOW);
+}
+
+static void iconReset(int cx, int cy, int r, uint16_t fg) {  // fleche circulaire
+  auto &d = *T;
+  d.fillArc(cx, cy, r * 55 / 100, r * 85 / 100, 300, 240, fg);  // anneau ouvert en haut a gauche
+  d.fillTriangle(cx - r * 100 / 100, cy - r * 15 / 100, cx - r * 30 / 100, cy - r * 15 / 100, cx - r * 65 / 100, cy + r * 35 / 100, fg);
+}
+
+void resetConfirm(int progressPct, int secondsLeft, bool holding) {
+  gAnim = false;
+  auto &d = (*T);
+  uint16_t bg = dim(TFT_RED);
+  d.fillScreen(bg);
+  iconReset(34, 34, 26, TFT_WHITE);
+  textStyle(kFont40, TFT_WHITE, bg);
+  d.setTextDatum(middle_center);
+  d.drawString(holding ? std::to_string(secondsLeft).c_str() : "3", 150, 34);
+  d.setTextDatum(top_left);
+  d.drawRoundRect(10, 76, d.width() - 20, 22, 6, TFT_WHITE);
+  if (progressPct > 0) d.fillRoundRect(12, 78, (d.width() - 24) * progressPct / 100, 18, 4, TFT_RED);
+  textStyle(kFont20, holding ? TFT_WHITE : TFT_LIGHTGREY, bg);
+  d.setTextDatum(middle_center);
+  d.drawString(holding ? "Maintenir..." : "Maintenir le haut 3 s", d.width() / 2, 112);
+  d.setTextDatum(top_left);
+}
+
 void menuRoot(size_t cursor, const std::string &volume, const std::string &brightness, const std::string &pause,
               const std::string &agents) {
   gAnim = false;
   auto &d = M5.Display;
   const int W = d.width(), rowH = 27;
+  const size_t kVisible = 5, total = san::kMenuRootRows;
   d.fillScreen(TFT_BLACK);
-  const char *labels[] = {"Volume", "Lumiere", "Pause", "Agents", "Sortir"};
-  std::string values[] = {volume, brightness, pause, agents, ""};
-  for (size_t i = 0; i < san::kMenuRootRows; i++) {
-    int y = (int)i * rowH, cy = y + rowH / 2 - 1;
+  const char *labels[] = {"Volume", "Lumiere", "Pause", "Agents", "Config Wi-Fi (AP)", "Reinitialiser", "Sortir"};
+  std::string values[] = {volume, brightness, pause, agents, "", "", ""};
+  size_t first = san::menuFirstRow(cursor, total, kVisible);
+  for (size_t k = 0; k < kVisible && first + k < total; k++) {
+    size_t i = first + k;
+    int y = (int)k * rowH, cy = y + rowH / 2 - 1;
     bool cur = i == cursor;
     uint16_t bg = cur ? kSelBg : TFT_BLACK;
-    d.fillRect(0, y, W, rowH - 2, bg);
+    d.fillRect(0, y, W - 5, rowH - 2, bg);
     if (cur) d.fillRect(0, y, 4, rowH - 2, TFT_PURPLE);
     switch (i) {
       case 0: if (volume == "Muet") iconSpeakerMuted(20, cy, 10, TFT_WHITE, TFT_RED); else iconSpeaker(20, cy, 10, TFT_WHITE, true); break;
       case 1: iconSun(20, cy, 10, TFT_YELLOW); break;
       case 2: iconMoon(20, cy, 10, TFT_YELLOW, bg); break;
       case 3: iconList(20, cy, 10, TFT_WHITE); break;
+      case 4: iconWifi(20, cy, 10, TFT_YELLOW); break;
+      case 5: iconReset(20, cy, 10, TFT_RED); break;
       default: iconBack(20, cy, 10, TFT_WHITE); break;
     }
     textStyle(kFont20, TFT_WHITE, bg);
     d.setCursor(40, y + 4);
     d.print(labels[i]);
     d.setTextDatum(top_right);
-    d.drawString(values[i].c_str(), W - 6, y + 4);
+    d.drawString(values[i].c_str(), W - 10, y + 4);
     d.setTextDatum(top_left);
+  }
+  if (total > kVisible) {  // ascenseur discret
+    int th = 135 * (int)kVisible / (int)total, ty = (135 - th) * (int)first / (int)(total - kVisible);
+    d.fillRect(W - 3, 0, 3, 135, 0x2104);
+    d.fillRect(W - 3, ty, 3, th, TFT_LIGHTGREY);
   }
 }
 

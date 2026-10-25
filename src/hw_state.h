@@ -22,6 +22,7 @@ struct Settings {
 void settingsLoad(Settings &s);
 void settingsSave(const Settings &s);      // reseau/serveur (portail)
 void settingsSaveUi(const Settings &s);    // volume, luminosite, pause
+void settingsEraseAll(Settings &s);        // efface tout le namespace NVS (reinitialisation d'usine) ; `s` remis par defaut
 void tokenSave(Settings &s, const String &token);
 void tokenClear(Settings &s);
 

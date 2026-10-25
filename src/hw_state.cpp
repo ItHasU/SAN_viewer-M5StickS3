@@ -41,6 +41,14 @@ void settingsSaveUi(const Settings &s) {
   p.end();
 }
 
+void settingsEraseAll(Settings &s) {
+  Preferences p;
+  p.begin(NS, false);
+  p.clear();  // Wi-Fi, URLs, jeton, volume / luminosite / pause
+  p.end();
+  s = Settings();
+}
+
 void tokenSave(Settings &s, const String &token) {
   s.token = token;
   Preferences p;
