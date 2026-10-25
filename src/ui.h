@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-#include "san_notify.h"
+#include "san_board.h"
 #include "san_types.h"
 #include "san_ui.h"
 
@@ -19,33 +19,28 @@ void pairing(const std::string &code);  // code d'appairage seul, en grand
 void portal(const std::string &apName, int remainingPct);
 // Confirmation de reinitialisation : barre de maintien (0-100) et compte a rebours ; holding = bouton enfonce.
 void resetConfirm(int progressPct, int secondsLeft, bool holding);
-// Ligne de notification (zone du haut).
-struct NotifLine {
-  std::string name;
-  san::NudgeType type = san::NudgeType::Notification;
-  bool voice = false, high = false;
-  int count = 1;
-  san::Sys sys = san::Sys::None;  // etat de connexion local (pas un agent)
-  bool busy = false;              // connexion en cours : icone qui pulse
-};
-// Tout ce que la vue principale affiche (aucune logique de decision ici).
+// Tout ce que l'ecran principal affiche (aucune logique de decision ici).
 struct MainView {
-  std::vector<NotifLine> notifs;  // les plus recentes d'abord (max cfg::kNotifLines affichees)
-  int pending = 0;                // total en attente
-  san::Activity activity;
-  san::Scene scene;               // un pictogramme par agent suivi ; l'agent selectionne est repere
+  san::AgentRow row;              // icones des agents (dernier statut), pastilles de vocaux, selection
   bool hasSel = false;
-  std::string selName;            // nom de l'agent selectionne (affiche en bas quand il n'y a pas de notification)
-  bool wifiOk = false, serverOk = false, speakerOn = true, autoSleep = true;
+  std::string selName;            // nom de l'agent selectionne (ligne de texte moyenne)
+  bool wifiOk = false, serverOk = false, speakerOn = true, autoSleep = true;  // barre de statut
   int battery = -1;
   san::Charge charge = san::Charge::Unknown;
 };
 void mainView(const MainView &v);
-// Anime la scene / l'engrenage / la barre d'activite ; appel frequent, sans effet si rien a animer.
+// Anime l'ecran principal ; appel frequent, sans effet si rien a animer.
 void mainTick();
 void stopAnim();
 void setBrightness(int b);  // 5-255, applique immediatement et memorise pour backlightOn
 void recording(const std::string &agentName, int ms, int maxMs);
-// Menu racine : curseur et valeurs courantes des reglages.
-void menuRoot(size_t cursor, const std::string &volume, const std::string &brightness, const std::string &pause);
+// Menu des parametres : une ligne par reglage (valeur en texte) ; `muted` = volume a zero (icone barree).
+struct MenuRowView {
+  san::MenuItem item;
+  std::string label, value;
+  bool muted = false;
+};
+void menu(size_t cursor, const std::vector<MenuRowView> &rows);
+// Lecture d'un vocal : progression en ms.
+void playback(const std::string &agentName, int ms, int totalMs);
 }  // namespace ui

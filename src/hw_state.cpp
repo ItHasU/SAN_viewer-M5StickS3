@@ -15,7 +15,10 @@ void settingsLoad(Settings &s) {
   s.wifiSsid = p.getString("ssid", "");
   s.wifiPass = p.getString("pass", "");
   s.homeSsid = p.getString("home", "");
-  s.volume = san::sanitizeVolume(p.getInt("vol", san::kDefaultVolume));
+  int oldVol = p.getInt("vol", san::kDefaultVolume);  // ancien volume unique : repris pour les deux
+  s.volNotif = san::sanitizeVolume(p.getInt("voln", oldVol));
+  s.volVoice = san::sanitizeVolume(p.getInt("volv", oldVol));
+  s.autoPlay = p.getBool("auto", san::kDefaultAutoPlay);
   s.brightness = san::sanitizeBrightness(p.getInt("bri", san::kDefaultBrightness));
   s.pauseS = san::sanitizePause(p.getInt("pause", san::kDefaultPauseS));
   p.end();
@@ -35,7 +38,9 @@ void settingsSave(const Settings &s) {
 void settingsSaveUi(const Settings &s) {
   Preferences p;
   p.begin(NS, false);
-  p.putInt("vol", s.volume);
+  p.putInt("voln", s.volNotif);
+  p.putInt("volv", s.volVoice);
+  p.putBool("auto", s.autoPlay);
   p.putInt("bri", s.brightness);
   p.putInt("pause", s.pauseS);
   p.end();
@@ -59,7 +64,7 @@ void tokenSave(Settings &s, const String &token) {
 void tokenClear(Settings &s) { tokenSave(s, ""); }
 
 // ---- RTC ----
-static const uint32_t kMagic = 0x53414E05;
+static const uint32_t kMagic = 0x53414E06;
 RTC_DATA_ATTR RtcState rtc;
 
 void rtcReset() {
@@ -106,6 +111,7 @@ void rtcStoreConfig(const san::Config &c) {
     for (int i = 0; i < oldN; i++)
       if (!strcmp(old[i].slug, r.slug)) {
         r.status = old[i].status; r.stale = old[i].stale; r.progress = old[i].progress;
+        r.voices = old[i].voices; r.nSeen = old[i].nSeen; memcpy(r.seen, old[i].seen, sizeof r.seen);
         break;
       }
     n++;
@@ -131,9 +137,10 @@ void rtcStoreStates(const std::vector<san::AgentState> &states, const san::Confi
   (void)c;
   for (int i = 0; i < rtc.nAgents; i++) {
     RtcAgent &r = rtc.agents[i];
-    r.status = 255; r.stale = 0; r.progress = -1;
+    r.status = 255; r.stale = 0; r.progress = -1; r.voices = 0;
     for (auto &s : states)
       if (s.agent == r.slug) {
+        r.voices = s.voicePending > 255 ? 255 : (uint8_t)s.voicePending;
         r.status = statusCode(s.status);
         r.stale = s.stale;
         r.progress = s.progress;
@@ -148,49 +155,35 @@ std::vector<san::AgentState> rtcLoadStates() {
     RtcAgent &r = rtc.agents[i];
     san::AgentState s;
     s.agent = r.slug; s.name = r.name; s.status = statusName(r.status);
-    s.progress = r.progress; s.stale = r.stale;
+    s.progress = r.progress; s.stale = r.stale; s.voicePending = r.voices;
     v.push_back(s);
   }
   return v;
 }
 
-std::vector<san::PrevStatus> rtcPrevStatuses() {
-  std::vector<san::PrevStatus> v;
-  for (int i = 0; i < rtc.nAgents; i++)
-    if (rtc.agents[i].status != 255) v.push_back({rtc.agents[i].slug, statusName(rtc.agents[i].status)});
+std::vector<san::PrevAgent> rtcPrevAgents() {
+  std::vector<san::PrevAgent> v;
+  for (int i = 0; i < rtc.nAgents; i++) {
+    const RtcAgent &r = rtc.agents[i];
+    san::PrevAgent p;
+    p.agent = r.slug;
+    p.status = statusName(r.status);  // "" si inconnu (255)
+    for (int k = 0; k < r.nSeen && k < (int)san::kSeenMax; k++) p.seen.push_back(r.seen[k]);
+    v.push_back(p);
+  }
   return v;
 }
 
-san::NotifQueue rtcLoadNotifs() {
-  std::vector<san::Notif> v;
-  for (int i = 0; i < rtc.nNotifs && i < (int)san::NotifQueue::kCapacity; i++) {
-    const RtcNotif &r = rtc.notifs[i];
-    san::Notif n;
-    n.agent = r.slug;
-    n.type = (san::NudgeType)(r.type <= (uint8_t)san::NudgeType::Error ? r.type : (uint8_t)san::NudgeType::Notification);
-    n.voice = r.flags & 1;
-    n.high = r.flags & 2;
-    n.count = r.count ? r.count : 1;
-    n.id = r.id;
-    v.push_back(n);
+void rtcUpdateSeen(const std::vector<san::AgentState> &states) {
+  for (int i = 0; i < rtc.nAgents; i++) {
+    RtcAgent &r = rtc.agents[i];
+    for (auto &s : states) {
+      if (s.agent != r.slug) continue;
+      std::vector<uint16_t> seen(r.seen, r.seen + (r.nSeen < san::kSeenMax ? r.nSeen : san::kSeenMax));
+      san::updateSeen(seen, s.voiceClips);
+      r.nSeen = (uint8_t)seen.size();
+      for (size_t k = 0; k < seen.size(); k++) r.seen[k] = seen[k];
+      break;
+    }
   }
-  san::NotifQueue q;
-  q.restore(v);
-  return q;
-}
-
-void rtcStoreNotifs(const san::NotifQueue &q) {
-  memset(rtc.notifs, 0, sizeof rtc.notifs);
-  int n = 0;
-  for (auto &it : q.items()) {
-    if (it.sys != san::Sys::None) continue;  // etat de connexion : ephemere (les compteurs d'echec, eux, sont en RTC)
-    if (n >= (int)san::NotifQueue::kCapacity) break;
-    RtcNotif &r = rtc.notifs[n++];
-    cpy(r.slug, sizeof r.slug, it.agent);
-    r.type = (uint8_t)it.type;
-    r.flags = (it.voice ? 1 : 0) | (it.high ? 2 : 0);
-    r.count = it.count > 255 ? 255 : (uint8_t)it.count;
-    r.id = it.id;
-  }
-  rtc.nNotifs = n;
 }

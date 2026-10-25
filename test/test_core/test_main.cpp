@@ -945,6 +945,29 @@ void test_conn_report_sound() {
   TEST_ASSERT_EQUAL(250, f);
 }
 
+void test_mic_gain() {
+  std::vector<int16_t> quiet = {100, -200, 300, -1000};
+  TEST_ASSERT_EQUAL(1024, micGainQ8(quiet.data(), quiet.size()));  // +12 dB
+  applyGainQ8(quiet.data(), quiet.size(), 1024);
+  TEST_ASSERT_EQUAL(400, quiet[0]);
+  TEST_ASSERT_EQUAL(-4000, quiet[3]);
+  std::vector<int16_t> mid = {16000, -12000};  // x4 saturerait : gain reduit, sans saturation
+  int g = micGainQ8(mid.data(), mid.size());
+  TEST_ASSERT_TRUE(g > 256 && g < 1024);
+  applyGainQ8(mid.data(), mid.size(), g);
+  TEST_ASSERT_TRUE(mid[0] <= 32000 && mid[0] > 16000);
+  std::vector<int16_t> loud = {32767, -32768, 100};  // deja sature : x1
+  TEST_ASSERT_EQUAL(256, micGainQ8(loud.data(), loud.size()));
+  applyGainQ8(loud.data(), loud.size(), 256);
+  TEST_ASSERT_EQUAL(32767, loud[0]);
+  std::vector<int16_t> zero(10, 0);
+  TEST_ASSERT_EQUAL(1024, micGainQ8(zero.data(), zero.size()));
+  std::vector<int16_t> edge = {30000, -30000};
+  applyGainQ8(edge.data(), 2, 1024);  // securite : pas de debordement
+  TEST_ASSERT_EQUAL(32767, edge[0]);
+  TEST_ASSERT_EQUAL(-32768, edge[1]);
+}
+
 int main(int, char **) {
   UNITY_BEGIN();
   RUN_TEST(test_sha256_vectors);
@@ -1001,5 +1024,6 @@ int main(int, char **) {
   RUN_TEST(test_agent_row_window);
   RUN_TEST(test_agent_row_layout_and_breath);
   RUN_TEST(test_conn_report_sound);
+  RUN_TEST(test_mic_gain);
   return UNITY_END();
 }
