@@ -121,3 +121,13 @@ calcul sans pourcentage. À valider à l'usage : les 4 autres types de nudge (re
 batterie (risque de redémarrage), la fluidité de l'animation.
 
 À valider sur la carte : lignes de connexion « Wi-Fi... » / « Serveur... » (pulsation, lisibilité), « Wi-Fi OK » après un échec, son d'erreur au 2e échec consécutif réveil timer hors couverture.
+
+## Sifflement écran allumé (non résolu, toléré)
+
+Un léger sifflement est audible carte éveillée (écran allumé) ; il disparaît en deep sleep. Essais faits le 25/10/2026 :
+- coupure de l'ampli et du codec ES8311 hors lecture : sans effet sur le sifflement ;
+- PWM du rétroéclairage (M5GFX : GPIO38, LEDC canal 7, 256 Hz par défaut) monté à 25 kHz : toujours audible ;
+- rétroéclairage fixe à 100 % (rapport cyclique 512/512, aucune commutation) : toujours audible.
+Ce n'est donc pas la commutation PWM du rétroéclairage. Pistes non explorées : bruit d'alimentation de l'écran ou du
+PMIC (M5PM1), activité du Wi-Fi/CPU couplée à l'ampli. Décision de l'utilisateur : on laisse tomber, le réglage de
+luminosité reste inchangé.
