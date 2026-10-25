@@ -77,9 +77,8 @@ enum class MainAction { None, AckLatest, NextAgent, Replay, Record, OpenMenu };
 MainAction mainAction(Button b, Press p, bool hasNotifications);
 
 // ---- Machine a etats du menu ----
-enum class MenuScreen { Root, Agents };
-enum class MenuItem { Volume, Brightness, Pause, Agents, WifiConfig, Reset, Exit };
-constexpr size_t kMenuRootRows = 7;
+enum class MenuItem { Volume, Brightness, Pause, WifiConfig, Reset, Exit };
+constexpr size_t kMenuRootRows = 6;
 // Premiere ligne visible d'une liste de `total` lignes dont `visible` tiennent a l'ecran (le curseur reste visible).
 size_t menuFirstRow(size_t cursor, size_t total, size_t visible);
 // Reinitialisation : appui maintenu kResetHoldMs sur le bouton du dessus (compte a rebours), annulable.
@@ -92,23 +91,14 @@ enum class MenuAct {
   None, Redraw, VolumeNext, BrightnessNext, PauseNext,
   WifiConfig,    // portail Wi-Fi (point d'acces) pour la configuration
   AskReset,      // demande de reinitialisation : l'appelant ouvre l'ecran de confirmation (appui maintenu)
-  OpenAgents,    // l'appelant charge la config puis appelle menuEnterAgents
-  ToggleAgent, ToggleMute, SaveAgents, Close
+  Close
 };
 struct MenuState {
-  MenuScreen screen = MenuScreen::Root;
-  size_t cursor = 0;       // ligne courante de l'ecran courant
-  size_t rootCursor = 0;   // curseur memorise du menu racine
-  size_t agentCount = 0;   // lignes agents ; la derniere ligne (index agentCount) = "Enregistrer"
-  size_t rows() const { return screen == MenuScreen::Root ? kMenuRootRows : agentCount + 1; }
+  size_t cursor = 0;  // ligne courante
   MenuItem item() const { return (MenuItem)(cursor < kMenuRootRows ? cursor : kMenuRootRows - 1); }
-  bool onSaveRow() const { return screen == MenuScreen::Agents && cursor == agentCount; }
 };
-// Racine : frontal clic = defiler ; haut clic = modifier la ligne (valeur suivante / entrer / sortir) ;
-// frontal long = sortir. Agents : frontal clic = defiler ; haut clic = cocher (ou enregistrer sur la derniere ligne) ;
-// haut long = muet on/off ; frontal long = retour au menu racine sans enregistrer. Idle = tout fermer.
+// Frontal clic = defiler ; haut clic = modifier la ligne (valeur suivante / ouvrir / sortir) ;
+// frontal long = sortir. Idle = tout fermer.
 MenuAct menuStep(MenuState &m, MenuEvent e);
-void menuEnterAgents(MenuState &m, size_t agentCount);
-void menuBackToRoot(MenuState &m);
 
 }  // namespace san

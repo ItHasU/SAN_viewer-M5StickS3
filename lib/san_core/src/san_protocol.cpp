@@ -53,7 +53,6 @@ std::string syncUrl(const std::string &base, int64_t ack, const std::string &con
 std::string registerUrl(const std::string &b) { return b + API + "/device/register"; }
 std::string statusUrl(const std::string &b) { return b + API + "/device/status"; }
 std::string capabilitiesUrl(const std::string &b) { return b + API + "/viewer/capabilities"; }
-std::string configUrl(const std::string &b) { return b + API + "/viewer/config"; }
 std::string voiceClipUrl(const std::string &b, const std::string &id) {
   return b + API + "/viewer/voice/" + urlEncode(id);
 }
@@ -93,24 +92,6 @@ std::string buildRegisterBody(const std::string &hw, const std::string &model, c
   return s;
 }
 
-std::string buildConfigPutBody(const std::string &baseHash, const Config &cfg) {
-  JsonDocument d;
-  d["base_hash"] = baseHash;
-  JsonArray arr = d["subscriptions"].to<JsonArray>();
-  int pos = 0;
-  for (auto &a : cfg.agents) {
-    JsonObject o = arr.add<JsonObject>();
-    o["agent"] = a.agent;
-    o["subscribed"] = a.subscribed;
-    o["position"] = a.position >= 0 ? a.position : pos;
-    o["muted"] = a.muted;
-    pos++;
-  }
-  std::string s;
-  serializeJson(d, s);
-  return s;
-}
-
 // ---- Parsing ----
 static std::string str(JsonVariantConst v) { return v.is<const char *>() ? std::string(v.as<const char *>()) : std::string(); }
 
@@ -122,9 +103,6 @@ static void readConfig(JsonObjectConst o, Config &c) {
     g.agent = str(a["agent"]);
     g.name = str(a["name"]);
     if (g.name.empty()) g.name = g.agent;
-    g.subscribed = a["subscribed"] | false;
-    g.isNew = a["new"] | false;
-    g.muted = a["muted"] | false;
     g.canSendVoice = a["can_send_voice"] | false;
     g.position = a["position"].is<int>() ? a["position"].as<int>() : -1;
     if (!g.agent.empty()) c.agents.push_back(g);
@@ -197,22 +175,6 @@ bool parseSync(const std::string &json, SyncResponse &out) {
   out.hasMore = d["has_more"] | false;
   out.nextSyncS = d["next_sync_s"] | 0;
   return true;
-}
-
-bool parseConfigResponse(const std::string &json, ConfigResponse &out) {
-  JsonDocument d;
-  if (deserializeJson(d, json)) return false;
-  out = ConfigResponse();
-  out.configHash = str(d["config_hash"]);
-  if (d["config"].is<JsonObject>()) {
-    readConfig(d["config"].as<JsonObjectConst>(), out.config);
-    return true;
-  }
-  if (d["agents"].is<JsonArray>()) {
-    readConfig(d.as<JsonObjectConst>(), out.config);
-    return true;
-  }
-  return false;
 }
 
 bool parseApiError(const std::string &json, ApiError &out) {

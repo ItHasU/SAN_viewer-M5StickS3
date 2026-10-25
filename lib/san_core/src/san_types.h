@@ -34,9 +34,6 @@ struct EventItem {
 
 struct AgentCfg {
   std::string agent, name;
-  bool subscribed = false;
-  bool isNew = false;
-  bool muted = false;
   bool canSendVoice = false;
   int position = -1;  // -1 = null
 };
@@ -67,12 +64,6 @@ struct RegisterResponse {
 };
 
 enum class DeviceStatus { Unknown, Pending, Active };
-
-// Reponse de GET/PUT /viewer/config et corps 409 (tolerant, voir parseConfigResponse).
-struct ConfigResponse {
-  std::string configHash;
-  Config config;
-};
 
 struct ApiError {
   std::string error, message;

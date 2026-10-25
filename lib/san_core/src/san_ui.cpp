@@ -131,42 +131,23 @@ MainAction mainAction(Button b, Press p, bool hasNotifications) {
   return MainAction::None;
 }
 
-void menuEnterAgents(MenuState &m, size_t agentCount) {
-  m.rootCursor = m.cursor;
-  m.screen = MenuScreen::Agents;
-  m.agentCount = agentCount;
-  m.cursor = 0;
-}
-void menuBackToRoot(MenuState &m) {
-  m.screen = MenuScreen::Root;
-  m.cursor = m.rootCursor;
-}
-
 MenuAct menuStep(MenuState &m, MenuEvent e) {
   if (e == MenuEvent::Idle) return MenuAct::Close;
   if (e == MenuEvent::FrontClick) {
-    m.cursor = (m.cursor + 1) % m.rows();
+    m.cursor = (m.cursor + 1) % kMenuRootRows;
     return MenuAct::Redraw;
   }
-  if (m.screen == MenuScreen::Root) {
-    if (e == MenuEvent::FrontHold) return MenuAct::Close;
-    if (e == MenuEvent::TopClick) {
-      switch (m.item()) {
-        case MenuItem::Volume: return MenuAct::VolumeNext;
-        case MenuItem::Brightness: return MenuAct::BrightnessNext;
-        case MenuItem::Pause: return MenuAct::PauseNext;
-        case MenuItem::Agents: return MenuAct::OpenAgents;
-        case MenuItem::WifiConfig: return MenuAct::WifiConfig;
-        case MenuItem::Reset: return MenuAct::AskReset;
-        case MenuItem::Exit: return MenuAct::Close;
-      }
+  if (e == MenuEvent::FrontHold) return MenuAct::Close;
+  if (e == MenuEvent::TopClick) {
+    switch (m.item()) {
+      case MenuItem::Volume: return MenuAct::VolumeNext;
+      case MenuItem::Brightness: return MenuAct::BrightnessNext;
+      case MenuItem::Pause: return MenuAct::PauseNext;
+      case MenuItem::WifiConfig: return MenuAct::WifiConfig;
+      case MenuItem::Reset: return MenuAct::AskReset;
+      case MenuItem::Exit: return MenuAct::Close;
     }
-    return MenuAct::None;
   }
-  // Ecran agents
-  if (e == MenuEvent::FrontHold) { menuBackToRoot(m); return MenuAct::Redraw; }
-  if (e == MenuEvent::TopClick) return m.onSaveRow() ? MenuAct::SaveAgents : MenuAct::ToggleAgent;
-  if (e == MenuEvent::TopHold) return m.onSaveRow() ? MenuAct::None : MenuAct::ToggleMute;
   return MenuAct::None;
 }
 

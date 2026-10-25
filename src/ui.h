@@ -45,8 +45,5 @@ void stopAnim();
 void setBrightness(int b);  // 5-255, applique immediatement et memorise pour backlightOn
 void recording(const std::string &agentName, int ms, int maxMs);
 // Menu racine : curseur et valeurs courantes des reglages.
-void menuRoot(size_t cursor, const std::string &volume, const std::string &brightness, const std::string &pause,
-              const std::string &agents);
-// Liste cochable des agents (derniere ligne : Enregistrer).
-void menuAgents(const san::Config &cfg, size_t cursor, const std::string &note);
+void menuRoot(size_t cursor, const std::string &volume, const std::string &brightness, const std::string &pause);
 }  // namespace ui

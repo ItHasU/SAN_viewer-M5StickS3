@@ -37,28 +37,19 @@ int64_t ackAfterProcessing(int64_t current, const std::vector<EventItem> &events
   return ack;
 }
 
-bool isMuted(const Config &cfg, const std::string &agent) {
-  const AgentCfg *a = cfg.find(agent);
-  return a && a->muted;
-}
-
 bool isNotableStatus(const std::string &s) { return s == "waiting" || s == "error" || s == "done"; }
 
 ScreenDecision decideScreen(const Config &cfg, const std::vector<PrevStatus> &prev,
                             const std::vector<AgentState> &states, const std::vector<EventItem> &events) {
   ScreenDecision d;
   for (auto &e : events) {
-    if (isMuted(cfg, e.agent)) continue;
     d.alertEvents++;
     d.screen = true;
     d.sound = true;
     if (e.isHigh()) d.highPriority = true;
   }
   for (auto &s : states) {
-    if (isMuted(cfg, s.agent) || s.stale || !isNotableStatus(s.status)) continue;
-    // Un agent absent de la config manuelle (non suivi) ne declenche rien.
-    const AgentCfg *c = cfg.find(s.agent);
-    if (c && !c->subscribed) continue;
+    if (s.stale || !isNotableStatus(s.status)) continue;
     bool changed = true;
     for (auto &p : prev) if (p.agent == s.agent) { changed = (p.status != s.status); break; }
     if (changed) d.screen = true;
@@ -70,7 +61,6 @@ std::vector<AgentState> orderStates(const Config &cfg, const std::vector<AgentSt
   std::vector<AgentState> out;
   std::vector<bool> used(states.size(), false);
   for (auto &a : cfg.agents) {
-    if (!a.subscribed) continue;
     for (size_t i = 0; i < states.size(); i++)
       if (!used[i] && states[i].agent == a.agent) { out.push_back(states[i]); used[i] = true; break; }
   }
@@ -112,27 +102,6 @@ int computeSleepSeconds(int nextSyncS, int failures) {
     if (backoff > base) base = backoff;
   }
   return base;
-}
-
-void toggleSubscribed(Config &c, size_t i) {
-  if (i < c.agents.size() && c.mode != "auto") {
-    c.agents[i].subscribed = !c.agents[i].subscribed;
-    c.agents[i].isNew = false;
-  }
-}
-void toggleMuted(Config &c, size_t i) {
-  if (i < c.agents.size()) c.agents[i].muted = !c.agents[i].muted;
-}
-
-bool configDiffers(const Config &a, const Config &b) {
-  if (a.mode != b.mode || a.agents.size() != b.agents.size()) return true;
-  for (size_t i = 0; i < a.agents.size(); i++) {
-    auto &x = a.agents[i]; auto &y = b.agents[i];
-    if (x.agent != y.agent || x.subscribed != y.subscribed || x.muted != y.muted ||
-        x.position != y.position || x.canSendVoice != y.canSendVoice)
-      return true;
-  }
-  return false;
 }
 
 }  // namespace san

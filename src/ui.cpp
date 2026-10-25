@@ -250,14 +250,6 @@ static void iconSun(int cx, int cy, int r, uint16_t fg) {
   }
 }
 
-static void iconList(int cx, int cy, int r, uint16_t fg) {
-  auto &d = *T;
-  for (int k = -1; k <= 1; k++) {
-    d.fillCircle(cx - r * 60 / 100, cy + k * r * 55 / 100, r * 12 / 100 + 1, fg);
-    d.fillRoundRect(cx - r * 30 / 100, cy + k * r * 55 / 100 - r * 8 / 100, r * 100 / 100, r * 16 / 100 + 1, 1, fg);
-  }
-}
-
 static void iconBack(int cx, int cy, int r, uint16_t fg) {
   float w = r * 0.14f + 1;
   wide(cx + r * 60 / 100, cy, cx - r * 60 / 100, cy, w, fg);
@@ -491,15 +483,14 @@ void resetConfirm(int progressPct, int secondsLeft, bool holding) {
   d.setTextDatum(top_left);
 }
 
-void menuRoot(size_t cursor, const std::string &volume, const std::string &brightness, const std::string &pause,
-              const std::string &agents) {
+void menuRoot(size_t cursor, const std::string &volume, const std::string &brightness, const std::string &pause) {
   gAnim = false;
   auto &d = M5.Display;
   const int W = d.width(), rowH = 27;
   const size_t kVisible = 5, total = san::kMenuRootRows;
   d.fillScreen(TFT_BLACK);
-  const char *labels[] = {"Volume", "Lumiere", "Pause", "Agents", "Config Wi-Fi (AP)", "Reinitialiser", "Sortir"};
-  std::string values[] = {volume, brightness, pause, agents, "", "", ""};
+  const char *labels[] = {"Volume", "Lumiere", "Pause", "Config Wi-Fi (AP)", "Reinitialiser", "Sortir"};
+  std::string values[] = {volume, brightness, pause, "", "", ""};
   size_t first = san::menuFirstRow(cursor, total, kVisible);
   for (size_t k = 0; k < kVisible && first + k < total; k++) {
     size_t i = first + k;
@@ -512,9 +503,8 @@ void menuRoot(size_t cursor, const std::string &volume, const std::string &brigh
       case 0: if (volume == "Muet") iconSpeakerMuted(20, cy, 10, TFT_WHITE, TFT_RED); else iconSpeaker(20, cy, 10, TFT_WHITE, true); break;
       case 1: iconSun(20, cy, 10, TFT_YELLOW); break;
       case 2: iconMoon(20, cy, 10, TFT_YELLOW, bg); break;
-      case 3: iconList(20, cy, 10, TFT_WHITE); break;
-      case 4: iconWifi(20, cy, 10, TFT_YELLOW); break;
-      case 5: iconReset(20, cy, 10, TFT_RED); break;
+      case 3: iconWifi(20, cy, 10, TFT_YELLOW); break;
+      case 4: iconReset(20, cy, 10, TFT_RED); break;
       default: iconBack(20, cy, 10, TFT_WHITE); break;
     }
     textStyle(kFont20, TFT_WHITE, bg);
@@ -528,49 +518,6 @@ void menuRoot(size_t cursor, const std::string &volume, const std::string &brigh
     int th = 135 * (int)kVisible / (int)total, ty = (135 - th) * (int)first / (int)(total - kVisible);
     d.fillRect(W - 3, 0, 3, 135, 0x2104);
     d.fillRect(W - 3, ty, 3, th, TFT_LIGHTGREY);
-  }
-}
-
-void menuAgents(const san::Config &cfg, size_t cursor, const std::string &note) {
-  gAnim = false;
-  auto &d = M5.Display;
-  const int W = d.width(), rowH = 27, rows = 4;
-  d.fillScreen(TFT_BLACK);
-  size_t total = cfg.agents.size() + 1;  // + ligne "Enregistrer"
-  size_t first = cursor >= (size_t)rows ? cursor - rows + 1 : 0;
-  int y = 0;
-  for (size_t i = first; i < total && i < first + rows; i++, y += rowH) {
-    bool cur = i == cursor;
-    uint16_t bg = cur ? kSelBg : TFT_BLACK;
-    d.fillRect(0, y, W, rowH - 2, bg);
-    if (cur) d.fillRect(0, y, 4, rowH - 2, TFT_PURPLE);
-    int cy = y + rowH / 2 - 1;
-    if (i == cfg.agents.size()) {
-      iconCheck(20, cy, 11, TFT_GREEN);
-      textStyle(kFont20, TFT_GREEN, bg);
-      d.setCursor(40, y + 4);
-      d.print("Enregistrer");
-      continue;
-    }
-    const auto &a = cfg.agents[i];
-    if (a.subscribed) {
-      d.fillCircle(20, cy, 10, TFT_GREEN);
-      iconCheck(20, cy, 10, TFT_BLACK);
-    } else {
-      d.drawCircle(20, cy, 10, TFT_DARKGREY);
-      d.drawCircle(20, cy, 9, TFT_DARKGREY);
-    }
-    textStyle(kFont20, a.muted ? TFT_DARKGREY : TFT_WHITE, bg);
-    d.setCursor(40, y + 4);
-    std::string n = san::truncateChars(a.name, 12);
-    if (a.isNew) n += "*";
-    d.print(n.c_str());
-    if (a.muted) iconSpeakerMuted(W - 16, cy, 10, TFT_LIGHTGREY, TFT_RED);
-  }
-  if (!note.empty()) {
-    textStyle(kFont20, TFT_YELLOW, TFT_BLACK);
-    d.setCursor(2, 112);
-    d.print(san::truncateChars(note, 22).c_str());
   }
 }
 

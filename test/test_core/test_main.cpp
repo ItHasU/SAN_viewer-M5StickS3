@@ -76,7 +76,6 @@ void test_other_urls() {
   TEST_ASSERT_EQUAL_STRING("https://h/api/v1/device/status", statusUrl("https://h").c_str());
   TEST_ASSERT_EQUAL_STRING("https://h/api/v1/viewer/voice/c_01J", voiceClipUrl("https://h", "c_01J").c_str());
   TEST_ASSERT_EQUAL_STRING("https://h/api/v1/viewer/voice?to=travail%2Fci%2Fx", voiceUploadUrl("https://h", "travail/ci/x").c_str());
-  TEST_ASSERT_EQUAL_STRING("https://h/api/v1/viewer/config", configUrl("https://h").c_str());
   TEST_ASSERT_EQUAL_STRING("https://h/api/v1/viewer/capabilities", capabilitiesUrl("https://h").c_str());
 }
 
@@ -113,8 +112,6 @@ void test_parse_sync_config() {
   TEST_ASSERT_EQUAL_STRING("manual", r.config.mode.c_str());
   TEST_ASSERT_EQUAL(3, r.config.agents.size());
   TEST_ASSERT_TRUE(r.config.agents[0].canSendVoice);
-  TEST_ASSERT_TRUE(r.config.agents[1].muted);
-  TEST_ASSERT_TRUE(r.config.agents[2].isNew);
   TEST_ASSERT_EQUAL(-1, r.config.agents[2].position);
 }
 void test_parse_sync_empty_and_bad() {
@@ -134,19 +131,7 @@ void test_parse_register_status() {
   TEST_ASSERT_TRUE(parseStatus(fx("status_active.json")) == DeviceStatus::Active);
   TEST_ASSERT_TRUE(parseStatus("garbage") == DeviceStatus::Unknown);
 }
-void test_parse_config_variants() {
-  ConfigResponse c;
-  TEST_ASSERT_TRUE(parseConfigResponse(fx("config_get.json"), c));
-  TEST_ASSERT_EQUAL_STRING("1111222233334444", c.configHash.c_str());
-  TEST_ASSERT_EQUAL(1, c.config.agents.size());
-  TEST_ASSERT_TRUE(parseConfigResponse(fx("config_409.json"), c));
-  TEST_ASSERT_EQUAL_STRING("9999888877776666", c.configHash.c_str());
-  TEST_ASSERT_EQUAL(2, c.config.agents.size());
-  TEST_ASSERT_TRUE(parseConfigResponse(
-      "{\"config_hash\":\"h\",\"mode\":\"auto\",\"agents\":[{\"agent\":\"a\",\"subscribed\":true}]}", c));
-  TEST_ASSERT_EQUAL_STRING("auto", c.config.mode.c_str());
-  TEST_ASSERT_EQUAL_STRING("a", c.config.agents[0].name.c_str());  // nom par defaut = slug
-  TEST_ASSERT_FALSE(parseConfigResponse("{\"x\":1}", c));
+void test_parse_api_error() {
   ApiError e;
   TEST_ASSERT_TRUE(parseApiError(fx("error_401.json"), e));
   TEST_ASSERT_EQUAL_STRING("unauthorized", e.error.c_str());
@@ -156,16 +141,6 @@ void test_bodies() {
   std::string reg = buildRegisterBody("m5sticks3-aabbcc", "M5StickS3", caps);
   TEST_ASSERT_NOT_NULL(strstr(reg.c_str(), "\"hardware_id\":\"m5sticks3-aabbcc\""));
   TEST_ASSERT_NOT_NULL(strstr(reg.c_str(), "\"capabilities\":{\"protocol_version\":1"));
-  Config c;
-  c.mode = "manual";
-  AgentCfg a; a.agent = "build-1"; a.subscribed = true; a.position = 0;
-  AgentCfg b; b.agent = "veille"; b.muted = true;
-  c.agents = {a, b};
-  std::string put = buildConfigPutBody("abc", c);
-  TEST_ASSERT_EQUAL_STRING(
-      "{\"base_hash\":\"abc\",\"subscriptions\":[{\"agent\":\"build-1\",\"subscribed\":true,\"position\":0,\"muted\":false},"
-      "{\"agent\":\"veille\",\"subscribed\":false,\"position\":1,\"muted\":true}]}",
-      put.c_str());
 }
 
 // ---------- machine a etats ----------
@@ -202,7 +177,7 @@ void test_ack() {
 static Config cfg2() {
   SyncResponse r;
   parseSync(fx("sync_with_config.json"), r);
-  return r.config;  // build-1 actif, veille mute, nouveau non suivi
+  return r.config;  // build-1, veille, nouveau (champs subscribed/muted du fixture ignores)
 }
 void test_screen_events() {
   Config c = cfg2();
@@ -212,14 +187,15 @@ void test_screen_events() {
   TEST_ASSERT_TRUE(d.screen);
   TEST_ASSERT_TRUE(d.sound);
   TEST_ASSERT_TRUE(d.highPriority);
-  TEST_ASSERT_EQUAL(1, d.alertEvents);  // l'evenement de "veille" (mute) est ignore
+  TEST_ASSERT_EQUAL(2, d.alertEvents);  // tous les evenements comptent
 }
-void test_screen_muted_only() {
+void test_screen_ignores_filters() {
+  // Plus de filtre local : un evenement d'un agent "muet" ou "non suivi" cote serveur alerte comme les autres.
   Config c = cfg2();
   EventItem e; e.id = 1; e.agent = "veille"; e.kind = "nudge";
   ScreenDecision d = decideScreen(c, {}, {}, {e});
-  TEST_ASSERT_FALSE(d.screen);
-  TEST_ASSERT_FALSE(d.sound);
+  TEST_ASSERT_TRUE(d.screen);
+  TEST_ASSERT_TRUE(d.sound);
 }
 void test_screen_state_change() {
   Config c = cfg2();
@@ -232,19 +208,38 @@ void test_screen_state_change() {
   s.status = "error"; s.stale = true;
   TEST_ASSERT_FALSE(decideScreen(c, {}, {s}, {}).screen);                     // perime
   s.stale = false; s.agent = "veille";
-  TEST_ASSERT_FALSE(decideScreen(c, {}, {s}, {}).screen);                     // mute
+  TEST_ASSERT_TRUE(decideScreen(c, {}, {s}, {}).screen);                      // "muet" cote serveur : ignore
   s.agent = "nouveau";
-  TEST_ASSERT_FALSE(decideScreen(c, {}, {s}, {}).screen);                     // non suivi
+  TEST_ASSERT_TRUE(decideScreen(c, {}, {s}, {}).screen);                      // "non suivi" : ignore
 }
 void test_order_states() {
   Config c = cfg2();
   AgentState a; a.agent = "veille";
   AgentState b; b.agent = "build-1";
-  AgentState z; z.agent = "nouveau";
+  AgentState z; z.agent = "inconnu";
   auto o = orderStates(c, {a, b, z});
-  TEST_ASSERT_EQUAL(2, o.size());
+  TEST_ASSERT_EQUAL(2, o.size());  // ordre de la config ; etat hors config ignore
   TEST_ASSERT_EQUAL_STRING("build-1", o[0].agent.c_str());
   TEST_ASSERT_EQUAL(2, orderStates(Config(), {a, b}).size());
+}
+void test_all_config_agents_displayed() {
+  // Le fixture marque "veille" comme muet et "nouveau" comme non suivi : la carte les affiche quand meme.
+  Config c = cfg2();
+  TEST_ASSERT_EQUAL(3, c.agents.size());
+  AgentState a; a.agent = "build-1"; a.status = "working";
+  AgentState b; b.agent = "veille"; b.status = "idle";
+  AgentState n; n.agent = "nouveau"; n.status = "done";
+  auto o = orderStates(c, {n, b, a});
+  TEST_ASSERT_EQUAL(3, o.size());
+  TEST_ASSERT_EQUAL_STRING("build-1", o[0].agent.c_str());
+  TEST_ASSERT_EQUAL_STRING("veille", o[1].agent.c_str());
+  TEST_ASSERT_EQUAL_STRING("nouveau", o[2].agent.c_str());
+  Activity act = summarizeActivity(o);
+  TEST_ASSERT_EQUAL(3, act.followed);
+  TEST_ASSERT_EQUAL(1, act.working);
+  TEST_ASSERT_EQUAL(3, (int)buildScene(o, 0).agents.size());
+  // Un changement vers "done" d'un agent "non suivi" allume l'ecran.
+  TEST_ASSERT_TRUE(decideScreen(c, {{"nouveau", "working"}}, {n}, {}).screen);
 }
 
 // ---------- texte / veille ----------
@@ -267,21 +262,6 @@ void test_sleep() {
   TEST_ASSERT_EQUAL(120, computeSleepSeconds(60, 1));
   TEST_ASSERT_EQUAL(900, computeSleepSeconds(60, 9));
 }
-void test_config_edit() {
-  Config c = cfg2();
-  toggleSubscribed(c, 2);
-  TEST_ASSERT_TRUE(c.agents[2].subscribed);
-  TEST_ASSERT_FALSE(c.agents[2].isNew);
-  toggleSubscribed(c, 99);  // hors limites : sans effet
-  toggleMuted(c, 0);
-  TEST_ASSERT_TRUE(c.agents[0].muted);
-  TEST_ASSERT_TRUE(configDiffers(c, cfg2()));
-  TEST_ASSERT_FALSE(configDiffers(cfg2(), cfg2()));
-  Config au = cfg2(); au.mode = "auto";
-  toggleSubscribed(au, 2);
-  TEST_ASSERT_FALSE(au.agents[2].subscribed);  // sans effet en mode auto
-}
-
 // ---------- audio ----------
 // Encodeur IMA ADPCM de test (meme algorithme que le decodeur, cote encodeur).
 static const int stepTab[89] = {7,8,9,10,11,12,13,14,16,17,19,21,23,25,28,31,34,37,41,45,50,55,60,66,73,80,88,97,107,118,130,143,157,173,190,209,230,253,279,307,337,371,408,449,494,544,598,658,724,796,876,963,1060,1166,1282,1411,1552,1707,1878,2066,2272,2499,2749,3024,3327,3660,4026,4428,4871,5358,5894,6484,7132,7845,8630,9493,10442,11487,12635,13899,15289,16818,18500,20350,22385,24623,27086,29794,32767};
@@ -492,7 +472,6 @@ void test_parse_real_server_sync() {
   TEST_ASSERT_TRUE(r.hasConfig);
   TEST_ASSERT_EQUAL_STRING("60a6ebb52e6e7aa6", r.configHash.c_str());
   TEST_ASSERT_EQUAL(1, r.config.agents.size());
-  TEST_ASSERT_TRUE(r.config.agents[0].subscribed);
   TEST_ASSERT_EQUAL(0, r.config.agents[0].position);
   TEST_ASSERT_EQUAL(1, r.states.size());
   TEST_ASSERT_EQUAL_STRING("working", r.states[0].status.c_str());
@@ -874,8 +853,6 @@ void test_menu_root() {
   menuStep(m, MenuEvent::FrontClick);
   TEST_ASSERT_TRUE(menuStep(m, MenuEvent::TopClick) == MenuAct::PauseNext);
   menuStep(m, MenuEvent::FrontClick);
-  TEST_ASSERT_TRUE(menuStep(m, MenuEvent::TopClick) == MenuAct::OpenAgents);
-  menuStep(m, MenuEvent::FrontClick);
   TEST_ASSERT_TRUE(menuStep(m, MenuEvent::TopClick) == MenuAct::WifiConfig);
   menuStep(m, MenuEvent::FrontClick);
   TEST_ASSERT_TRUE(menuStep(m, MenuEvent::TopClick) == MenuAct::AskReset);
@@ -884,34 +861,10 @@ void test_menu_root() {
   TEST_ASSERT_TRUE(menuStep(m, MenuEvent::TopClick) == MenuAct::Close);
   menuStep(m, MenuEvent::FrontClick);  // boucle
   TEST_ASSERT_EQUAL(0, (int)m.cursor);
+  TEST_ASSERT_EQUAL(6, (int)kMenuRootRows);
   TEST_ASSERT_TRUE(menuStep(m, MenuEvent::FrontHold) == MenuAct::Close);
   TEST_ASSERT_TRUE(menuStep(m, MenuEvent::Idle) == MenuAct::Close);
   TEST_ASSERT_TRUE(menuStep(m, MenuEvent::TopHold) == MenuAct::None);
-}
-
-void test_menu_agents() {
-  MenuState m;
-  m.cursor = 3;
-  menuStep(m, MenuEvent::TopClick);  // OpenAgents
-  menuEnterAgents(m, 2);
-  TEST_ASSERT_TRUE(m.screen == MenuScreen::Agents);
-  TEST_ASSERT_EQUAL(0, (int)m.cursor);
-  TEST_ASSERT_EQUAL(3, (int)m.rows());
-  TEST_ASSERT_TRUE(menuStep(m, MenuEvent::TopClick) == MenuAct::ToggleAgent);
-  TEST_ASSERT_TRUE(menuStep(m, MenuEvent::TopHold) == MenuAct::ToggleMute);
-  menuStep(m, MenuEvent::FrontClick);
-  menuStep(m, MenuEvent::FrontClick);
-  TEST_ASSERT_TRUE(m.onSaveRow());
-  TEST_ASSERT_TRUE(menuStep(m, MenuEvent::TopClick) == MenuAct::SaveAgents);
-  TEST_ASSERT_TRUE(menuStep(m, MenuEvent::TopHold) == MenuAct::None);
-  menuStep(m, MenuEvent::FrontClick);
-  TEST_ASSERT_EQUAL(0, (int)m.cursor);  // boucle
-  TEST_ASSERT_TRUE(menuStep(m, MenuEvent::FrontHold) == MenuAct::Redraw);  // retour racine, sans enregistrer
-  TEST_ASSERT_TRUE(m.screen == MenuScreen::Root);
-  TEST_ASSERT_EQUAL(3, (int)m.cursor);
-  menuEnterAgents(m, 0);  // aucun agent : seule la ligne Enregistrer
-  TEST_ASSERT_EQUAL(1, (int)m.rows());
-  TEST_ASSERT_TRUE(menuStep(m, MenuEvent::Idle) == MenuAct::Close);
 }
 
 static AgentState mkAgent(const char *slug, const char *status, bool stale = false) {
@@ -987,7 +940,7 @@ void test_menu_scroll_and_reset_hold() {
   TEST_ASSERT_TRUE(resetConfirmed(3000));
   // l'entree Reinitialiser n'ouvre jamais la confirmation par un simple defilement
   MenuState m;
-  for (int i = 0; i < 5; i++) menuStep(m, MenuEvent::FrontClick);
+  for (int i = 0; i < 4; i++) menuStep(m, MenuEvent::FrontClick);
   TEST_ASSERT_TRUE(m.item() == MenuItem::Reset);
   TEST_ASSERT_TRUE(menuStep(m, MenuEvent::FrontClick) == MenuAct::Redraw);
 }
@@ -1005,17 +958,17 @@ int main(int, char **) {
   RUN_TEST(test_parse_sync_config);
   RUN_TEST(test_parse_sync_empty_and_bad);
   RUN_TEST(test_parse_register_status);
-  RUN_TEST(test_parse_config_variants);
+  RUN_TEST(test_parse_api_error);
   RUN_TEST(test_bodies);
   RUN_TEST(test_phase_machine);
   RUN_TEST(test_ack);
   RUN_TEST(test_screen_events);
-  RUN_TEST(test_screen_muted_only);
+  RUN_TEST(test_screen_ignores_filters);
   RUN_TEST(test_screen_state_change);
   RUN_TEST(test_order_states);
+  RUN_TEST(test_all_config_agents_displayed);
   RUN_TEST(test_truncate);
   RUN_TEST(test_sleep);
-  RUN_TEST(test_config_edit);
   RUN_TEST(test_wav_pcm_header_roundtrip);
   RUN_TEST(test_wav_streaming_size_and_list_chunk);
   RUN_TEST(test_wav_invalid);
@@ -1046,7 +999,6 @@ int main(int, char **) {
   RUN_TEST(test_battery_style);
   RUN_TEST(test_main_actions);
   RUN_TEST(test_menu_root);
-  RUN_TEST(test_menu_agents);
   RUN_TEST(test_scene_styles);
   RUN_TEST(test_scene_calm_and_empty);
   RUN_TEST(test_scene_grouping);

@@ -101,7 +101,7 @@ static ui::MainView buildView() {
 static void redraw() { ui::mainView(buildView()); G.dirty = false; }
 
 // ---- etat de connexion : notifications locales (jamais d'ecran plein) ----
-enum class Mode { Main, MenuRoot, MenuAgents };
+enum class Mode { Main, Menu };
 static Mode gMode = Mode::Main;  // ecran courant pendant l'eveil
 // La vue principale peut etre redessinee sans ecraser un autre ecran (menu, code d'appairage).
 static bool mainVisible() { return G.screenOn && gMode == Mode::Main && G.phase != Phase::Pairing; }
@@ -229,7 +229,6 @@ static size_t processEvents(const std::vector<EventItem> &events) {
   size_t done = 0;
   std::vector<EventItem> alerted;
   for (const auto &e : events) {
-    if (isMuted(G.cfg, e.agent)) { done++; continue; }
     bool voice = e.kind == "voice" && e.hasClip;
     if (voice) {
       Fetch f = fetchClip(e.clip.id, e.agent);
@@ -417,65 +416,10 @@ static void doReplay() {
 // ---- menu ----
 struct MenuCtx {
   MenuState st;
-  Config work;           // copie editable des abonnements
-  std::string baseHash;  // hash de la config sur laquelle on s'est base (PUT)
-  std::string note;
 };
 
 static void drawMenu(const MenuCtx &m) {
-  if (m.st.screen == MenuScreen::Root)
-    ui::menuRoot(m.st.cursor, formatVolume(S.volume), formatBrightness(S.brightness), formatPause(S.pauseS),
-                 std::to_string(G.cfg.agents.size()));
-  else
-    ui::menuAgents(m.work, m.st.cursor, m.note);
-}
-
-// Charge la config courante du serveur pour l'edition. false : echec (note renseignee).
-static bool menuLoadConfig(MenuCtx &m) {
-  if (!ensureOnline()) { m.note = "Wi-Fi indisponible"; return false; }
-  ui::message("Agents", "Chargement...", TFT_CYAN);
-  net::Resp r(cfg::kMaxJsonResp);
-  call(r, HTTP_METHOD_GET, configUrl(G.base));
-  if (handleAuth(r.code)) return false;
-  ConfigResponse cr;
-  if (r.ok() && parseConfigResponse(r.text(), cr)) adoptConfig(cr.config, cr.configHash);
-  else if (!r.ok()) { m.note = "Echec HTTP " + std::to_string(r.code); return false; }
-  m.baseHash = rtc.configHash;
-  m.work = G.cfg;
-  if (m.work.agents.empty()) { m.note = "Aucun agent visible"; return false; }
-  m.note = m.work.mode == "auto" ? "Mode auto : muet seul" : "";
-  return true;
-}
-
-// Enregistre les abonnements (SPEC 8.3). true : enregistre. 409 : config serveur adoptee, a refaire.
-static bool menuSaveConfig(MenuCtx &m) {
-  ui::message("Agents", "Enregistrement...", TFT_CYAN);
-  net::Resp r(cfg::kMaxJsonResp);
-  callJson(r, HTTP_METHOD_PUT, configUrl(G.base), buildConfigPutBody(m.baseHash, m.work));
-  if (handleAuth(r.code)) return false;
-  ConfigResponse cr;
-  if (r.code == 409) {
-    if (parseConfigResponse(r.text(), cr)) { adoptConfig(cr.config, cr.configHash); m.baseHash = rtc.configHash; m.work = G.cfg; }
-    m.note = "Conflit : refaites";
-    m.st.cursor = 0;
-    return false;
-  }
-  if (!r.ok()) {
-    ApiError e;
-    m.note = parseApiError(r.text(), e) ? e.message : "Echec HTTP " + std::to_string(r.code);
-    return false;
-  }
-  if (parseConfigResponse(r.text(), cr) && !cr.configHash.empty()) {
-    adoptConfig(cr.config, cr.configHash);
-  } else {
-    // Reponse sans config/hash : on relit la config effective pour obtenir le hash.
-    adoptConfig(m.work, "");
-    net::Resp g(cfg::kMaxJsonResp);
-    call(g, HTTP_METHOD_GET, configUrl(G.base));
-    if (g.ok() && parseConfigResponse(g.text(), cr)) adoptConfig(cr.config, cr.configHash);
-  }
-  G.sel = 0;
-  return true;
+  ui::menuRoot(m.st.cursor, formatVolume(S.volume), formatBrightness(S.brightness), formatPause(S.pauseS));
 }
 
 // Evenement de menu d'apres les boutons (aucun si rien). Frontal = defiler / retour, dessus = agir.
@@ -562,22 +506,9 @@ static bool menuApply(MenuCtx &m, MenuAct act) {
       S.pauseS = nextPause(S.pauseS);
       settingsSaveUi(S);
       break;
-    case MenuAct::OpenAgents:
-      if (menuLoadConfig(m)) menuEnterAgents(m.st, m.work.agents.size());
-      else { ui::message("Agents", m.note, TFT_ORANGE); waitOrButton(1500); m.note.clear(); }
-      break;
     case MenuAct::WifiConfig: doWifiConfig(); return true;
     case MenuAct::AskReset:
       if (confirmReset()) doFactoryReset();
-      break;
-    case MenuAct::ToggleAgent: toggleSubscribed(m.work, m.st.cursor); break;
-    case MenuAct::ToggleMute: toggleMuted(m.work, m.st.cursor); break;
-    case MenuAct::SaveAgents:
-      if (menuSaveConfig(m)) {
-        ui::message("Agents", "Enregistre", TFT_GREEN);
-        waitOrButton(1000);
-        menuBackToRoot(m.st);
-      }
       break;
     case MenuAct::Close: return true;
     default: break;
@@ -623,7 +554,7 @@ static void awakeLoop() {
           }
           case MainAction::OpenMenu:
             menu = MenuCtx();
-            mode = Mode::MenuRoot;
+            mode = Mode::Menu;
             ui::stopAnim();
             menuLast = millis();
             drawMenu(menu);
@@ -658,9 +589,7 @@ static void awakeLoop() {
           continue;
         }
         menuLast = millis();
-        mode = menu.st.screen == MenuScreen::Root ? Mode::MenuRoot : Mode::MenuAgents;
         drawMenu(menu);
-        if (act != MenuAct::ToggleAgent && act != MenuAct::ToggleMute) menu.note.clear();
       }
     }
     delay(15);

@@ -30,7 +30,7 @@ void tokenClear(Settings &s);
 struct RtcAgent {
   char slug[32];
   char name[20];
-  uint8_t flags;  // 1 subscribed, 2 new, 4 muted, 8 can_send_voice
+  uint8_t flags;  // 8 can_send_voice (bits 1/2/4 : anciens abonnement/nouveau/muet, ignores)
   uint8_t status; // 0 idle 1 working 2 waiting 3 error 4 done 255 inconnu
   uint8_t stale;
   int8_t progress;

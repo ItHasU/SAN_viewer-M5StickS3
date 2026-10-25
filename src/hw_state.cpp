@@ -101,7 +101,7 @@ void rtcStoreConfig(const san::Config &c) {
     RtcAgent &r = rtc.agents[n];
     cpy(r.slug, sizeof r.slug, a.agent);
     cpy(r.name, sizeof r.name, a.name);
-    r.flags = (a.subscribed ? 1 : 0) | (a.isNew ? 2 : 0) | (a.muted ? 4 : 0) | (a.canSendVoice ? 8 : 0);
+    r.flags = a.canSendVoice ? 8 : 0;
     r.status = 255;
     for (int i = 0; i < oldN; i++)
       if (!strcmp(old[i].slug, r.slug)) {
@@ -121,9 +121,6 @@ san::Config rtcLoadConfig() {
     a.agent = rtc.agents[i].slug;
     a.name = rtc.agents[i].name;
     a.position = i;
-    a.subscribed = rtc.agents[i].flags & 1;
-    a.isNew = rtc.agents[i].flags & 2;
-    a.muted = rtc.agents[i].flags & 4;
     a.canSendVoice = rtc.agents[i].flags & 8;
     c.agents.push_back(a);
   }

@@ -19,7 +19,6 @@ std::string syncUrl(const std::string &base, int64_t ack, const std::string &con
 std::string registerUrl(const std::string &base);
 std::string statusUrl(const std::string &base);
 std::string capabilitiesUrl(const std::string &base);
-std::string configUrl(const std::string &base);
 std::string voiceClipUrl(const std::string &base, const std::string &clipId);
 std::string voiceUploadUrl(const std::string &base, const std::string &agent);
 
@@ -32,14 +31,11 @@ std::string capsHash(const std::string &rawBody);
 // ---- Corps de requete ----
 std::string buildRegisterBody(const std::string &hardwareId, const std::string &model,
                               const std::string &capsJson);
-std::string buildConfigPutBody(const std::string &baseHash, const Config &cfg);
 
 // ---- Parsing ----
 bool parseRegister(const std::string &json, RegisterResponse &out);
 DeviceStatus parseStatus(const std::string &json);
 bool parseSync(const std::string &json, SyncResponse &out);
-// Accepte {config_hash, config:{mode,agents}} ou {config_hash, mode, agents}.
-bool parseConfigResponse(const std::string &json, ConfigResponse &out);
 bool parseApiError(const std::string &json, ApiError &out);
 
 }  // namespace san

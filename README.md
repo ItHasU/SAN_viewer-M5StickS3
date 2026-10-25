@@ -28,15 +28,15 @@ pio device monitor
 | [icone] Agent        x2   <- notifications en attente,
 | [icone] Agent             <- 3 lignes max, la plus recente en haut
 | [icone] Agent                 (icone du type : start / notification / question / done / error / vocal)
-|--------------------------------------|   (sans notification : scene animee, un pictogramme par agent suivi)
-| cloche N | engrenage w/f |        <- nb de notifications | agents en activite / suivis (aucun nom d'agent)
+|--------------------------------------|   (sans notification : scene animee, un pictogramme par agent affiche)
+| cloche N | engrenage w/f |        <- nb de notifications | agents en activite / affiches (aucun nom d'agent)
 | wifi  serveur  haut-parleur  veille  [batterie] 87% (eclair si charge)
 +--------------------------------------+
 ```
 
 - Plus aucun détail texte d'agent en bas : icônes et grandes polices. Les notifications du haut gardent icône +
   nom court de l'agent. `priority: high` = ligne sur fond vif.
-- **Scène (file de notifications vide)** : 1 pictogramme par agent suivi, sans nom (`buildScene`, `san_ui.*`) :
+- **Scène (file de notifications vide)** : 1 pictogramme par agent affiché, sans nom (`buildScene`, `san_ui.*`) :
   `working` = engrenage cyan qui tourne (léger rebond, phases décalées) ; à l'arrêt = pictogramme statique atténué
   (lune grise `idle`/périmé, coche verte `done`, point d'exclamation orange `waiting`, croix rouge `error`).
   Personne ne travaille : scène calme, respiration lente (±2 px, ~6 s). 6 agents max ; au-delà : 5 pictogrammes +
@@ -44,7 +44,7 @@ pio device monitor
   suivant) est souligné discrètement. Dessin dans le canevas PSRAM (sans scintillement), animé seulement pendant la
   fenêtre d'éveil (80 ms si activité, 120 ms au repos).
 - Activité : l'engrenage tourne et une petite barre glisse si au moins un agent est `working` ; `w/f` = agents en
-  activité / agents suivis par ce viewer.
+  activité / agents affichés (tous ceux de la config).
 - Statut : Wi-Fi (barré = hors ligne), serveur (barré = dernière synchronisation en échec), haut-parleur (barré =
   volume 0), lune (barrée = veille automatique désactivée), batterie (jauge colorée + %, éclair en charge).
 - File de notifications : nudges et vocaux reçus, bornée à 16 entrées, persistée en RTC memory entre deux sommeils
@@ -74,14 +74,13 @@ reset/power du PMIC n'est pas utilisable. Les deux boutons réveillent la carte 
 |---|---|---|
 | Sommeil | clic : réveil, affiche la vue principale | idem |
 | Vue principale | **clic** : acquitte la notification du haut (la plus récente) ; sans notification : agent suivant. **Appui long** : agent suivant (même avec des notifications) | **clic** : répète le dernier vocal ; **appui long** : enregistre (relâcher = envoi à l'agent sélectionné) ; **double clic** : ouvre le menu |
-| Menu (racine : Volume, Lumière, Pause, Agents, Config Wi-Fi (AP), Réinitialiser, Sortir ; 5 lignes visibles, défilement + ascenseur) | **clic** : modifie la ligne courante (valeur suivante ; Agents = ouvrir ; Config Wi-Fi = ouvrir le portail ; Réinitialiser = écran de confirmation ; Sortir = quitter) | **clic** : ligne suivante ; **appui long** : quitter |
+| Menu (racine : Volume, Lumière, Pause, Config Wi-Fi (AP), Réinitialiser, Sortir ; 5 lignes visibles sur 6, défilement + ascenseur) | **clic** : modifie la ligne courante (valeur suivante ; Config Wi-Fi = ouvrir le portail ; Réinitialiser = écran de confirmation ; Sortir = quitter) | **clic** : ligne suivante ; **appui long** : quitter |
 | Portail Wi-Fi lancé depuis le menu | **clic** : annuler | **clic** : annuler (sinon timeout 240 s) |
 | Confirmation de reset | **maintenir 3 s** : réinitialise (barre + compte à rebours ; relâcher = remise à zéro) | **clic** : annuler (15 s d'inactivité = annulation) |
-| Menu > Agents (liste cochable + ligne « Enregistrer ») | **clic** : coche/décoche (sur « Enregistrer » : sauvegarde) ; **appui long** : muet on/off de l'agent | **clic** : ligne suivante ; **appui long** : retour sans enregistrer |
 | Enregistrement / lecture | un appui coupe la lecture ou le son en cours | relâcher termine l'enregistrement |
 | Démarrage (reset) | **maintenu 3 s** : portail Wi-Fi (jamais sur réveil timer) | - |
 
-Inactivité 30 s dans le menu : fermeture sans enregistrer les abonnements.
+Inactivité 30 s dans le menu : fermeture.
 
 Réglages (NVS `vol`, `bri`, `pause`, appliqués et sauvegardés immédiatement ; le volume joue un bip d'aperçu) :
 
@@ -107,8 +106,13 @@ notifications, hashes, caches), journalise `[san] REINITIALISATION` sur le port 
 portail (premier démarrage). Le serveur n'est pas modifié : la carte réapparaît comme nouvelle, l'ancien
 enregistrement reste à révoquer par l'administrateur.
 
-Les agents visibles sur l'écran sont ceux suivis (abonnements) ; la sélection des agents se fait dans le menu
-(mode `manual` ; en mode `auto`, seul le muet est modifiable). `PUT /viewer/config` avec gestion du 409.
+**Agents affichés** : la carte n'a plus de filtre local. Tous les agents de la configuration reçue du serveur
+(`config.agents`, dans l'ordre de la config, ceux qui ont un état) sont affichés et pris en compte : scène, compteurs
+« en activité / suivis », bascule d'agent, notifications. Les champs `subscribed`, `muted` et `new` reçus sont ignorés
+et la carte n'envoie plus rien à `/viewer/config` (plus de `PUT`, plus de gestion du 409 ; le `config_hash` du
+`GET /viewer/sync` reste utilisé pour recevoir la config). Le filtrage se règle côté serveur/admin : une carte en mode
+`manual` ne reçoit que les agents cochés côté admin (la carte ne contourne pas cela) ; en mode `auto`, le serveur
+renvoie tous les agents visibles. Pour tout afficher, passer la carte en mode `auto` dans l'admin.
 
 ## Configuration initiale
 
@@ -135,9 +139,8 @@ config/capacités, configuration et états en cache, canal/BSSID Wi-Fi, dernier 
 
 - Base = origine du serveur ; toutes les routes sont préfixées `/api/v1`.
 - `caps_hash` = 16 hex de `sha256` du corps exact envoyé à `PUT /viewer/capabilities` (DESIGN §4).
-- `GET`/`PUT /viewer/config` et corps `409` : `{config_hash, config:{mode,agents[]}}` (la forme à plat
-  `{config_hash, mode, agents}` est aussi acceptée). Sans `config_hash` dans la réponse du `PUT`, la carte
-  relit `GET /viewer/config`.
+- La config arrive dans `GET /viewer/sync` : `{config_hash, config:{mode,agents[]}}` (seuls `agent`, `name`,
+  `position`, `can_send_voice` sont lus). La carte n'appelle plus `/viewer/config`.
 - `POST /viewer/voice?to=<agent>` : `Content-Type: audio/wav`, réponse 2xx.
 - Un clip `404`/`410` est considéré comme purgé (ignoré et acquitté).
 
@@ -152,5 +155,4 @@ config/capacités, configuration et états en cache, canal/BSSID Wi-Fi, dernier 
 - Le Wi-Fi est établi avant l'interaction (pas pendant l'enregistrement) ; l'affichage initial vient du cache RTC.
 - Réécoute : instantanée tant que la carte reste éveillée (clip gardé en PSRAM), sinon re-téléchargement.
 - `max_detail_chars` reste déclaré dans les capacités (le détail n'est plus affiché) : le retirer changerait le hash.
-- Le menu ne peut pas lister d'agents hors ligne (Wi-Fi requis pour « Agents »).
 - Code non testé sur carte physique (voir `docs/HARDWARE.md`).

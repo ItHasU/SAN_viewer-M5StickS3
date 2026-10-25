@@ -34,15 +34,15 @@ struct ScreenDecision {
   bool screen = false;      // allumer l'ecran
   bool sound = false;       // jouer un son de nudge
   bool highPriority = false;
-  int alertEvents = 0;      // evenements concernant un agent non muet
+  int alertEvents = 0;      // evenements recus
 };
-// Notable : changement vers waiting/error/done sur un agent non muet. Evenements d'agents muets ignores.
+// Notable : changement vers waiting/error/done (non perime). Aucun filtre local : tous les agents comptent.
 ScreenDecision decideScreen(const Config &cfg, const std::vector<PrevStatus> &prev,
                             const std::vector<AgentState> &states, const std::vector<EventItem> &events);
-bool isMuted(const Config &cfg, const std::string &agent);
 bool isNotableStatus(const std::string &status);
 
-// Ordre d'affichage : agents suivis (subscribed) selon la config, puis etats inconnus de la config.
+// Ordre d'affichage : tous les agents de la config (ordre de la config) ayant un etat. Aucun filtre local
+// (ni abonnement ni muet) ; config vide : etats tels quels.
 std::vector<AgentState> orderStates(const Config &cfg, const std::vector<AgentState> &states);
 
 // ---- Texte ----
@@ -62,11 +62,5 @@ IconStyle statusIcon(const std::string &status, bool stale);
 // ---- Veille ----
 // Duree de deep sleep : next_sync_s serveur borne [10, 3600], defaut 60 ; echecs consecutifs -> backoff.
 int computeSleepSeconds(int nextSyncS, int consecutiveFailures);
-
-// ---- Edition de config (menu) ----
-void toggleSubscribed(Config &cfg, size_t index);
-void toggleMuted(Config &cfg, size_t index);
-// Applique la config adoptee depuis le serveur (409). Renvoie true si elle differe de l'ancienne.
-bool configDiffers(const Config &a, const Config &b);
 
 }  // namespace san

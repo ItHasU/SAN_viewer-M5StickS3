@@ -108,15 +108,15 @@ USB disparaît pendant le deep sleep), serveur SAN en Docker (compose standalone
 | 3 | `capabilities_required`, PUT caps, hash identique côté serveur | OK (hash enregistré côté serveur, identique à celui du simulateur) |
 | 4 | Règle `*` + `can_send_voice`, état/nudge/say depuis `bin/san` : écran, son, clip ADPCM 16 kHz | OK : texte lisible, voix intelligible ; volume jugé trop bas à 160, relevé à 230 ; **nudge `question` déclenché par un vrai hook Claude Code : son et icône OK** |
 | 5 | Enregistrement (appui long frontal) vers l'agent | Non testé |
-| 6 | Menu abonnements (double clic frontal puis Agents), 409 | Non testé |
+| 6 | Menu abonnements (double clic frontal puis Agents), 409 | Supprimé : plus de filtre sur la carte, tous les agents sont affichés |
 | 7 | Deep sleep : réveil timer et bouton, consommation | Réveil timer OK (cycle 60 s) ; réveil bouton, consommation : non testés |
 | 8 | Révocation dans l'admin, 401, effacement du jeton | Non testé |
 | 9 | Batterie remontée dans l'admin | OK (81 %, puis 99 % après charge) |
 
-Évolution suivante (voir README, « Boutons ») : vue principale à icônes (notifications en haut, activité et statut en bas), file de notifications, menu de réglages (volume, lumière, pause, agents), batterie avec éclair de charge.
+Évolution suivante (voir README, « Boutons ») : vue principale à icônes (notifications en haut, activité et statut en bas), file de notifications, menu de réglages (volume, lumière, pause), batterie avec éclair de charge.
 
 Ajouts non testés sur carte (à valider) : scène animée sans notification (un pictogramme par agent, `working` = engrenage
-cyan, autres atténués, « +N » au-delà de 6), menu à 7 lignes avec défilement, **Config Wi-Fi (AP)** (portail WiFiManager
+cyan, autres atténués, « +N » au-delà de 6), menu à 6 lignes (Volume, Lumière, Pause, Config Wi-Fi, Réinitialiser, Sortir ; 5 visibles) avec défilement, **Config Wi-Fi (AP)** (portail WiFiManager
 non bloquant lancé depuis le menu, annulable au clic, timeout 240 s, sans redémarrage) et **Réinitialiser** (maintien 3 s
 du bouton du dessus, annulable au bouton frontal : efface NVS + RTC puis redémarre en portail ; journal série
 `[san] REINITIALISATION`). Écrans de pairing (code seul) et de portail (icône Wi-Fi + nom de l'AP) simplifiés. À vérifier :
