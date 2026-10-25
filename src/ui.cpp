@@ -23,6 +23,10 @@ static const uint16_t kVoiceBg = 0x041F;  // bleu : message vocal
 
 static lgfx::LovyanGFX *T = &M5.Display;  // cible de dessin (ecran ou canvas hors-ecran)
 static int gBrightness = 110;
+// Test sifflement : true = rétroéclairage toujours à 100 % (rapport cyclique 512/512 = niveau fixe, aucune commutation PWM).
+// Le réglage de luminosité du menu est alors ignoré à l'affichage.
+static const bool kBacklightNoPwm = true;
+static int effectiveBrightness() { return kBacklightNoPwm ? 255 : gBrightness; }
 static bool gAnim = false;  // animation "calcul en cours" active (voir animTick)
 
 // Fond sombre teinte pour un etat (1/4 de la luminosite de la couleur).
@@ -49,9 +53,9 @@ void begin() {
 }
 void setBrightness(int b) {
   gBrightness = b;
-  M5.Display.setBrightness(b);
+  M5.Display.setBrightness(effectiveBrightness());
 }
-void backlightOn() { M5.Display.wakeup(); silenceBacklightPwm(); M5.Display.setBrightness(gBrightness); }
+void backlightOn() { M5.Display.wakeup(); silenceBacklightPwm(); M5.Display.setBrightness(effectiveBrightness()); }
 void backlightOff() { M5.Display.setBrightness(0); M5.Display.sleep(); }
 
 // ---------------------------------------------------------------- pictogrammes
