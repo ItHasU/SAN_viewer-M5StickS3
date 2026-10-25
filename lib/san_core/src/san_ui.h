@@ -83,13 +83,14 @@ struct IconRow {
   int nameCy;   // ordonnee du centre du nom
 };
 IconRow iconRowLayout(int slots, int width = kScreenW);
-// Ligne de resume : total en attente (cloche) et, s'il y en a, agents en activite (engrenage anime).
+// Ligne de resume : total en attente (cloche) et agents en activite / agents suivis (engrenage, anime si au moins un travaille).
 struct Summary {
   std::string pending;
-  bool showWorking;
-  std::string working;
+  bool showWorking;    // vrai s'il y a au moins un agent suivi
+  bool anyWorking;     // vrai si au moins un agent travaille (engrenage anime, cyan)
+  std::string working; // "<actifs>/<suivis>", ex. "2/5"
 };
-Summary buildSummary(int pending, int working);
+Summary buildSummary(int pending, int working, int followed);
 
 // ---- Batterie ----
 enum class Charge { Unknown, Discharging, Charging };

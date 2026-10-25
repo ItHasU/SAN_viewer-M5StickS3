@@ -43,7 +43,7 @@ Avec notifications (y compris entrées système « Wi-Fi » / « Serveur »), ex
 | [icone] Agent                    x2  |   ligne 1 (la plus récente), 28 px
 | [icone] Agent                        |   ligne 2, 28 px
 | [icone] Agent                        |   ligne 3, 28 px            (y 0..83)
-| cloche N        engrenage w          |   résumé, 24 px (y 84..107) ; engrenage animé seulement si w > 0
+| cloche N        engrenage w/f        |   résumé, 24 px (y 84..107) ; w = agents actifs, f = agents suivis ; engrenage animé seulement si w > 0
 |--------------------------------------| y 108
 | wifi  serveur  haut-parleur  veille  [batterie] 87%   statut, y 109..134 (26 px)
 +--------------------------------------+ y 135
@@ -60,8 +60,8 @@ résumé suit directement la dernière ligne (il reste un espace noir avec 1 ou 
   limite à 18 caractères). L'animation des agents `working` (engrenage cyan qui tourne) est conservée sur la rangée.
   Dessin : `drawScene` / `drawSelName`, `src/ui.cpp`.
 - **Avec notifications** : jusqu'à 3 lignes (la plus récente en haut, icône du type + nom court + `xN`, fond vif si
-  priorité haute), puis **une ligne de résumé** (cloche + total en attente ; engrenage animé + nombre d'agents en
-  activité s'il y en a), puis la ligne de statut. Ni rangée d'icônes ni nom d'agent dans ce mode.
+  priorité haute), puis **une ligne de résumé** (cloche + total en attente ; engrenage + `actifs/suivis`, ex. `2/5`,
+  animé et cyan si au moins un agent travaille, gris et fixe sinon), puis la ligne de statut. Ni rangée d'icônes ni nom d'agent dans ce mode.
 - **Scène / rangée d'icônes** : 1 pictogramme par agent affiché, sans nom (`buildScene`, `san_ui.*`) :
   `working` = engrenage cyan qui tourne (léger rebond, phases décalées) ; à l'arrêt = pictogramme statique atténué
   (lune grise `idle`/périmé, coche verte `done`, point d'exclamation orange `waiting`, croix rouge `error`).
@@ -69,8 +69,8 @@ résumé suit directement la dernière ligne (il reste un espace noir avec 1 ou 
   « +N » (la fenêtre glisse pour garder l'agent sélectionné visible). L'agent sélectionné (bouton du dessus : agent
   suivant) est souligné ; il est conservé entre deux sommeils (RTC, par slug, `rtc.selAgent`). Dessin dans le canevas PSRAM (sans scintillement), animé seulement pendant la
   fenêtre d'éveil (80 ms si activité, 120 ms au repos).
-- Résumé (avec notifications) : cloche + total en attente ; si au moins un agent est `working`, un engrenage tourne
-  avec le nombre d'agents en activité.
+- Résumé (avec notifications) : cloche + total en attente ; engrenage + `actifs/suivis` (ex. `2/5`) ; il tourne en
+  cyan si au moins un agent est `working`, sinon il reste gris et fixe (`0/5`). Absent s'il n'y a aucun agent suivi.
 - Statut : Wi-Fi (barré = hors ligne), serveur (barré = dernière synchronisation en échec), haut-parleur (barré =
   volume 0), lune (barrée = veille automatique désactivée), batterie (jauge colorée + %, éclair en charge).
 - File de notifications : nudges et vocaux reçus, bornée à 16 entrées, persistée en RTC memory entre deux sommeils

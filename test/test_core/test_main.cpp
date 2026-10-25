@@ -969,13 +969,18 @@ void test_icon_row_layout() {
 }
 
 void test_summary() {
-  Summary a = buildSummary(3, 0);
+  Summary a = buildSummary(3, 0, 0);
   TEST_ASSERT_EQUAL_STRING("3", a.pending.c_str());
-  TEST_ASSERT_FALSE(a.showWorking);
-  Summary b = buildSummary(120, 2);
+  TEST_ASSERT_FALSE(a.showWorking);  // aucun agent suivi : pas d'engrenage
+  Summary c = buildSummary(3, 0, 5);
+  TEST_ASSERT_TRUE(c.showWorking);
+  TEST_ASSERT_FALSE(c.anyWorking);
+  TEST_ASSERT_EQUAL_STRING("0/5", c.working.c_str());
+  Summary b = buildSummary(120, 2, 5);
   TEST_ASSERT_EQUAL_STRING("99+", b.pending.c_str());
   TEST_ASSERT_TRUE(b.showWorking);
-  TEST_ASSERT_EQUAL_STRING("2", b.working.c_str());
+  TEST_ASSERT_TRUE(b.anyWorking);
+  TEST_ASSERT_EQUAL_STRING("2/5", b.working.c_str());
 }
 
 void test_menu_scroll_and_reset_hold() {

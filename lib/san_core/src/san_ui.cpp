@@ -123,8 +123,8 @@ IconRow iconRowLayout(int slots, int width) {
   return g;
 }
 
-Summary buildSummary(int pending, int working) {
-  return {formatCount(pending), working > 0, formatCount(working)};
+Summary buildSummary(int pending, int working, int followed) {
+  return {formatCount(pending), followed > 0, working > 0, formatCount(working) + "/" + formatCount(followed)};
 }
 
 size_t menuFirstRow(size_t cursor, size_t total, size_t visible) {

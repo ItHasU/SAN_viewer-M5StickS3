@@ -362,15 +362,16 @@ static void drawMain(const MainView &v, uint32_t frame) {
     // notifications (3 max), puis une ligne de resume : total en attente + agents en activite
     for (int i = 0; i < nl.shown; i++) drawNotifLine(d, v.notifs[i], i * nl.lineH, nl.lineH, frame);
     const int sy = nl.summaryY, scy = sy + san::kSummaryH / 2;
-    san::Summary sm = san::buildSummary(v.pending, v.activity.working);
+    san::Summary sm = san::buildSummary(v.pending, v.activity.working, v.activity.followed);
     bool any = v.pending > 0;
     iconBell(18, scy, 10, any ? TFT_ORANGE : TFT_DARKGREY);
     textStyle(kFont24, any ? TFT_WHITE : TFT_DARKGREY, TFT_BLACK);
     d.setTextDatum(middle_left);
     d.drawString(sm.pending.c_str(), 36, scy);
     if (sm.showWorking) {
-      iconGear(d, 118, scy, 10, TFT_CYAN, TFT_BLACK, frame * 0.12f);
-      textStyle(kFont24, TFT_CYAN, TFT_BLACK);
+      const uint16_t col = sm.anyWorking ? TFT_CYAN : TFT_DARKGREY;
+      iconGear(d, 118, scy, 10, col, TFT_BLACK, sm.anyWorking ? frame * 0.12f : 0.0f);
+      textStyle(kFont24, col, TFT_BLACK);
       d.drawString(sm.working.c_str(), 136, scy);
     }
     d.setTextDatum(top_left);
