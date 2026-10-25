@@ -24,6 +24,34 @@ connaissent `board_M5StickS3`). **Aucune vérification sur carte physique n'a pu
 
 Recommandation M5Stack : volume HP < 75 % sur batterie (reboots sinon) -> le firmware utilise 230/255 (~90 %, volontairement plus fort ; a surveiller : reboot sur batterie ?).
 
+## Coupure audio hors lecture (grésillement au repos)
+
+Symptôme rapporté : souffle/crépitement quand rien n'est joué, carte éveillée.
+
+Ce que fait réellement M5Unified (`M5Unified.inl`, `_speaker_enabled_cb_sticks3`, ~l.633-665) : `Speaker.begin()` allume
+l'ampli (PMIC M5PM1, reg 0x11 bit 3 = GPIO3) puis configure l'ES8311 par I2C ; `Speaker.end()` (`Speaker_Class.inl`
+`_end_locked`) rappelle le callback avec `false`, qui ne fait **que** couper la broche d'ampli, puis désinstalle l'I2S.
+Le DAC de l'ES8311 n'est jamais mis hors tension (seul le callback micro, `_microphone_enabled_cb_sticks3`, écrit
+0x0D=0xFC / 0x0E=0x6A / 0x00=0x00). Le codec peut en outre rester actif après un reveil du deep sleep (rail permanent).
+`Speaker.setVolume()` / `stop()` n'appellent jamais `begin()` ; seuls `tone()` / `playRaw()` le font (paresseusement).
+
+Causes probables : (1) ampli resté allumé entre la fin d'un son et le prochain `housekeeping()`, notamment pendant les
+attentes bloquantes (connexion Wi-Fi, réseau) ou après l'aperçu sonore du volume ; (2) DAC/codec laissé actif (bruit
+de fond, ampli allumé ou non).
+
+Corrections (`src/audio_io.cpp`) :
+- `speakerOff()` : `stop()`, volume maître 0 (pas de clic), `Speaker.end()` (ampli coupé), puis mise hors tension de
+  l'ES8311 par I2C (0x12=0x02, 0x0D=0xFC, 0x0E=0x6A, 0x00=0x00, valeurs reprises de M5Unified).
+- `quiesce()` : même séquence sans condition, appelée au boot (après `M5.begin`) et avant le deep sleep.
+- Le haut-parleur n'est démarré qu'à la demande (`speakerBegin()` avant un son) ; `setVolume()` mémorise seulement.
+- `sysTick()` (attente Wi-Fi) appelle `housekeeping()` pour couper l'ampli dès la fin d'un son.
+- Le micro reste exclusif du haut-parleur : `recordWav` appelle `speakerOff()` puis `Mic.begin()` (qui refait le reset codec).
+
+Limites / à valider à l'oreille : (a) disparition du grésillement carte éveillée au repos ; (b) absence de clic à
+l'ouverture/fermeture de l'ampli ; (c) premier son après repos (ouverture codec) non tronqué ; (d) enregistrement micro
+toujours correct après un son ; (e) un son déclenché pendant un appel HTTP bloquant garde l'ampli allumé jusqu'au retour
+à la boucle (aucun `housekeeping()` dans `esp_http_client`). Non vérifié sur carte : l'effet réel du power-down I2C.
+
 ## Configuration PlatformIO retenue
 
 Reprise de la doc M5Stack : `platform = espressif32@6.12.0` (Arduino-ESP32 2.0.17), `board = esp32-s3-devkitc-1`,

@@ -113,9 +113,32 @@ void soundStop() {
   M5.Speaker.stop();
 }
 
+// Arret complet du chemin audio. Speaker.end() ne fait, sur StickS3, que couper la broche d'ampli (GPIO3 du PMIC)
+// et desinstaller l'I2S : le DAC de l'ES8311 reste alimente. On le met donc aussi hors tension par I2C, avec les
+// memes valeurs que M5Unified (_microphone_enabled_cb_sticks3 / _speaker_enabled_cb_stopwatch). Speaker.begin() et
+// Mic.begin() refont un reset complet du codec (reg 0x00 = 0x80) : aucun etat a restaurer.
+static void codecPowerDown() {
+  static const uint8_t kRegs[][2] = {
+      {0x12, 0x02},  // SYSTEM : DAC hors tension
+      {0x0D, 0xFC},  // SYSTEM : circuits analogiques hors tension
+      {0x0E, 0x6A},  // SYSTEM : PGA / modulateur ADC coupes
+      {0x00, 0x00},  // RESET : CSM hors tension
+  };
+  for (const auto &r : kRegs) M5.In_I2C.writeRegister8(0x18, r[0], r[1], 100000);
+}
+
 void speakerOff() {
-  M5.Speaker.end();
+  if (!sSpkOn) return;  // jamais demarre : rien a couper (ne pas rappeler end() inutilement)
+  M5.Speaker.stop();
+  M5.Speaker.setVolume(0);  // pas de clic a la coupure de l'ampli
+  M5.Speaker.end();         // ampli coupe (PMIC), I2S desinstalle
   sSpkOn = false;
+  codecPowerDown();
+}
+
+void quiesce() {
+  sSpkOn = true;  // force la sequence complete meme si l'etat est inconnu (reveil deep sleep, boot)
+  speakerOff();
 }
 
 void housekeeping() {

@@ -127,7 +127,10 @@ static void sysResult(Sys s, bool ok) {
   if (o.sound) audio_io::soundStart(NudgeType::Error, false);  // non bloquant
   sysShow();
 }
-static void sysTick() { if (mainVisible()) ui::mainTick(); }
+static void sysTick() {
+  audio_io::housekeeping();  // coupe l'ampli si un son vient de finir pendant une attente bloquante
+  if (mainVisible()) ui::mainTick();
+}
 
 // ---------------- reseau / API ----------------
 static bool ensureOnline() {
@@ -613,7 +616,7 @@ static void awakeLoop() {
 // ---------------- sommeil ----------------
 static void sleepNow(int seconds) {
   audio_io::soundWait();  // laisse finir un son en cours avant de dormir
-  audio_io::speakerOff();
+  audio_io::quiesce();
   M5.Mic.end();
   freeClip();
   if (G.screenOn) ui::backlightOff();
@@ -661,6 +664,7 @@ void setup() {
   ui::begin();
   rtcInit();
   settingsLoad(S);
+  audio_io::quiesce();  // ampli + codec coupes tant qu'aucun son n'est joue
   audio_io::setVolume(S.volume);
   ui::setBrightness(S.brightness);
   esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();

@@ -19,7 +19,10 @@ void soundTick();
 bool soundBusy();
 void soundWait();
 void soundStop();
+// Coupe tout le chemin audio (ampli + DAC) ; sans effet si deja coupe. Le haut-parleur n'est demarre qu'a la demande.
 void speakerOff();
+// Coupe sans condition (boot, avant deep sleep) : l'ES8311 peut etre reste actif apres un reveil.
+void quiesce();
 // Libere le haut-parleur quand plus rien ne joue (appeler regulierement, ex. depuis la boucle principale).
 void housekeeping();
 
