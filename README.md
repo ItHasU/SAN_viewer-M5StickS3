@@ -22,125 +22,99 @@ pio device monitor
 ## Écran (paysage 240x135)
 
 `setRotation(1)` : USB-C en bas, bouton latéral (**dessus**) en haut, bouton **frontal** sur la face avant.
-
-Sans notification (rangée d'icônes agrandies + nom ; seule la ligne de statut reste en bas) :
+Quatre écrans : principal, menu des paramètres, lecture d'un vocal, enregistrement vocal (+ écrans de service :
+code d'appairage, portail Wi-Fi, confirmation de réinitialisation, messages).
 
 ```
 +--------------------------------------+ y 0
 |                                      |
-|  (cog)  (lune)  (coche)  (!)  (x)    |   une icône d'état par agent, rayon 24 px max (17 px à 6 emplacements),
-|         ‾‾‾‾‾‾                       |   y ~7..55 ; barre sous l'agent SÉLECTIONNÉ ; « +N » au-delà de 6
-|        Nom de l'agent                |   NOM sélectionné, police 40 (24 si trop large), centré, y ~64..106
+|  (cog)  (coche) (!)  (?)  (coche)    |   zone d'agents : une icône par agent (dernier statut), rayon 24 px max
+|           ‾‾‾‾‾              (3)     |   (17 px à 6 emplacements) ; barre sous l'agent SÉLECTIONNÉ ; « +N » au-delà
+|        Nom de l'agent                |   pastille bleue en bas à droite = vocaux en attente ; nom : police 24, y ~79..105
 |--------------------------------------| y 108 (séparateur)
-| wifi  serveur  haut-parleur  veille  [batterie] 87% (éclair si charge)   y 109..134 (26 px)
+| wifi  serveur  haut-parleur  veille  [batterie] 87% (éclair si charge)   barre de statut, y 109..134
 +--------------------------------------+ y 135
 ```
 
-Avec notifications (y compris entrées système « Wi-Fi » / « Serveur »), exemple à 3 notifications :
-
-```
-+--------------------------------------+ y 0
-| [icone] Agent                    x2  |   ligne 1 (la plus récente), 28 px
-| [icone] Agent                        |   ligne 2, 28 px
-| [icone] Agent                        |   ligne 3, 28 px            (y 0..83)
-| cloche N        engrenage w/f        |   résumé, 24 px (y 84..107) ; w = agents actifs, f = agents suivis ; engrenage animé seulement si w > 0
-|--------------------------------------| y 108
-| wifi  serveur  haut-parleur  veille  [batterie] 87%   statut, y 109..134 (26 px)
-+--------------------------------------+ y 135
-```
-
-Hauteur des lignes de notification : 1 ou 2 notifications = 40 px, 3 = 28 px (`notifLayout`, `san_ui.*`) ; le
-résumé suit directement la dernière ligne (il reste un espace noir avec 1 ou 2 notifications).
-
-- Plus aucun détail texte d'agent en bas : icônes et grandes polices. Les notifications du haut gardent icône +
-  nom court de l'agent. `priority: high` = ligne sur fond vif.
-- **Sans notification** : plus de texte « Pas de message », plus de compteurs ni de scène en bas. Rangée d'icônes
-  agrandies (rayon selon le nombre d'emplacements : 24 px jusqu'à 4, 21 à 5, 17 à 6 ; `iconRowLayout`) avec l'agent
-  sélectionné souligné, et **nom de l'agent sélectionné** en police 40 (24 si trop large, puis tronqué ; `agentLabel`
-  limite à 18 caractères). L'animation des agents `working` (engrenage cyan qui tourne) est conservée sur la rangée.
-  Dessin : `drawScene` / `drawSelName`, `src/ui.cpp`.
-- **Avec notifications** : jusqu'à 3 lignes (la plus récente en haut, icône du type + nom court + `xN`, fond vif si
-  priorité haute), puis **une ligne de résumé** (cloche + total en attente ; engrenage + `actifs/suivis`, ex. `2/5`,
-  animé et cyan si au moins un agent travaille, gris et fixe sinon), puis la ligne de statut. Ni rangée d'icônes ni nom d'agent dans ce mode.
-- **Scène / rangée d'icônes** : 1 pictogramme par agent affiché, sans nom (`buildScene`, `san_ui.*`) :
-  `working` = engrenage cyan qui tourne (léger rebond, phases décalées) ; à l'arrêt = pictogramme statique atténué
-  (lune grise `idle`/périmé, coche verte `done`, point d'exclamation orange `waiting`, croix rouge `error`).
-  Personne ne travaille : scène calme, respiration lente (±2 px, ~6 s). 6 agents max ; au-delà : 5 pictogrammes +
-  « +N » (la fenêtre glisse pour garder l'agent sélectionné visible). L'agent sélectionné (bouton du dessus : agent
-  suivant) est souligné ; il est conservé entre deux sommeils (RTC, par slug, `rtc.selAgent`). Dessin dans le canevas PSRAM (sans scintillement), animé seulement pendant la
-  fenêtre d'éveil (80 ms si activité, 120 ms au repos).
-- Résumé (avec notifications) : cloche + total en attente ; engrenage + `actifs/suivis` (ex. `2/5`) ; il tourne en
-  cyan si au moins un agent est `working`, sinon il reste gris et fixe (`0/5`). Absent s'il n'y a aucun agent suivi.
-- Statut : Wi-Fi (barré = hors ligne), serveur (barré = dernière synchronisation en échec), haut-parleur (barré =
-  volume 0), lune (barrée = veille automatique désactivée), batterie (jauge colorée + %, éclair en charge).
-- File de notifications : nudges et vocaux reçus, bornée à 16 entrées, persistée en RTC memory entre deux sommeils
-  (perdue à une coupure d'alimentation). Même agent + même type = fusion avec compteur (`x2`) ; le total du résumé
-  est la somme des compteurs. Acquitter est **local** (le serveur est déjà acquitté dès que la notification est en file).
-- Un nouveau nudge allume l'écran et joue le son de son type (`lib/san_core/src/san_sound.*`, 1 son par lot : le
-  plus important ; `high` = son répété 2 fois). Réveil timer sans nouveauté : écran éteint.
-- **Connexion = notifications locales, pas d'écran plein** (`san_notify.*`, `Sys`) : pendant la connexion une ligne
-  « Wi-Fi... » puis « Serveur... » (icône qui pulse) apparaît dans la zone du haut, seulement si l'écran est allumé.
-  Échec : ligne rouge « Wi-Fi » (icône barrée) / « Serveur » (icône croisée), fusion avec compteur `xN`. Rétablissement
-  après un échec : « Wi-Fi OK » / « Serveur OK » (coche verte) qui s'auto-acquitte après 4 s ; pas de « OK » sans échec
-  précédent. Une entrée de connexion est **remplacée** (pas empilée) quand l'état change, s'acquitte avec le bouton du
-  dessus comme les autres, n'est jamais envoyée au serveur ni comptée comme agent. Ces entrées sont **éphémères** (non
-  persistées en RTC) ; seuls les compteurs d'échecs consécutifs (`wifiFails`, `serverFails`) le sont. Son d'erreur :
-  écran déjà allumé, ou 2e échec consécutif (une seule fois, pas à chaque réveil hors couverture) ; un réveil timer
-  reste écran éteint. Restent en plein écran : portail Wi-Fi (icône Wi-Fi + nom du réseau AP + barre de temps restant, sans titre ni
-  adresse), code d'appairage (code seul, en grand, avec icônes ; plus d'URL du serveur), enregistrement, vocal,
-  agents, confirmation de reset.
+- **Icône d'un agent** (dernier statut serveur, `states[].status`) : `idle` / `done` = coche verte ; `error` = point
+  d'exclamation rouge ; `waiting` = point d'interrogation jaune ; `working` = engrenage cyan animé ; périmé ou inconnu =
+  tiret gris. Personne ne réfléchit : respiration lente (±2 px). 6 emplacements max, au-delà « +N » (la fenêtre glisse
+  pour garder l'agent sélectionné visible).
+- **Nudges** (`start|notification|question|done|error`) : ils déclenchent le son marimba de leur type. Le serveur fixe
+  l'état de l'agent avec le nudge (question→waiting, error→error, done→done, start→working, notification→inchangé) : l'icône
+  vient donc uniquement de `states[]`.
+- **Pastille** : nombre de vocaux non lus (`voice_pending`, « 9+ » au-delà). La liste des clips (`voice_pending_clips`,
+  du plus ancien au plus récent) dit lequel lire, indépendamment du curseur d'acquittement. Un vocal lu est signalé au
+  serveur (`POST /viewer/voice/:clip/played`, idempotent), ce qui décrémente la pastille.
+- **Auto-sélection** : quand le statut d'un agent change ou qu'un vocal arrive, la sélection va sur cet agent. Plusieurs
+  changements simultanés : priorité vocal > question > problème > prêt (à égalité : le dernier de la liste). Passer à
+  « réflexion » ne change pas la sélection ; aucun changement pendant un enregistrement. La sélection est conservée entre
+  deux sommeils (RTC, par slug).
+- **Lecture automatique** (réglage, défaut oui) : un vocal qui arrive est joué tout de suite (écran de lecture : haut-parleur,
+  agent, progression) ; sinon il reste en pastille jusqu'à l'appui frontal. Volume vocaux à zéro : pas de lecture auto.
+- **Barre de statut** : Wi-Fi (barré = hors ligne), serveur (barré = dernière synchronisation en échec), volume (barré si les
+  deux volumes sont à zéro), lune (barrée = veille automatique désactivée), batterie (jauge colorée + %, éclair en charge).
+  Plus de lignes de notification ni de résumé : l'état réseau n'apparaît que dans la barre.
+- Un nouveau nudge allume l'écran. Réveil timer sans nouveauté : écran éteint.
+- Restent en plein écran : portail Wi-Fi (icône + nom de l'AP + temps restant), code d'appairage (seul, en grand),
+  enregistrement, lecture d'un vocal, menu, confirmation de reset.
 
 ## Boutons
 
-Le vocal (appui long frontal) et la réécoute visent l'agent **sélectionné** ; s'il n'a pas `can_send_voice` : message « Envoi non autorisé vers cet agent ».
-
-Hypothèses (à valider sur la carte, constantes `SAN_BTN_TOP` / `SAN_BTN_FRONT` dans `src/config.h`, seuil d'appui long
-`cfg::kHoldMs` = 500 ms) : bouton du **dessus** = BtnB (G12, latéral), bouton **frontal** = BtnA (G11). Le bouton
-reset/power du PMIC n'est pas utilisable. Les deux boutons réveillent la carte (ext1).
+Constantes `SAN_BTN_TOP` / `SAN_BTN_FRONT` dans `src/config.h`, seuil d'appui long `cfg::kHoldMs` = 500 ms : bouton du
+**dessus** = BtnB (G12, latéral), bouton **frontal** = BtnA (G11). Le bouton reset/power du PMIC n'est pas utilisable.
+Les deux boutons réveillent la carte (ext1). Plus d'acquittement : le bouton du dessus ne sert plus à acquitter.
 
 | Contexte | Dessus (BtnB) | Frontal (BtnA) |
 |---|---|---|
-| Sommeil | clic : réveil, affiche la vue principale | idem |
-| Vue principale | **clic** : acquitte la notification du haut (la plus récente) ; sans notification : agent suivant (rotation). **Appui long** : agent suivant (même avec des notifications) | **clic** : répète le dernier vocal ; **appui long** : enregistre (relâcher = envoi à l'agent sélectionné) ; **double clic** : ouvre le menu |
-| Menu (racine : Volume, Lumière, Pause, Config Wi-Fi (AP), Réinitialiser, Sortir ; 5 lignes visibles sur 6, défilement + ascenseur) | **clic** : modifie la ligne courante (valeur suivante ; Config Wi-Fi = ouvrir le portail ; Réinitialiser = écran de confirmation ; Sortir = quitter) | **clic** : ligne suivante ; **appui long** : quitter |
-| Portail Wi-Fi lancé depuis le menu | **clic** : annuler | **clic** : annuler (sinon timeout 240 s) |
-| Confirmation de reset | **maintenir 3 s** : réinitialise (barre + compte à rebours ; relâcher = remise à zéro) | **clic** : annuler (15 s d'inactivité = annulation) |
-| Enregistrement / lecture | un appui coupe la lecture ou le son en cours | relâcher termine l'enregistrement |
+| Sommeil | appui : réveil | idem |
+| Écran principal | **clic** : agent suivant ; **appui long** : ouvrir les paramètres | **clic** : lire le vocal de l'agent sélectionné (le plus ancien en attente ; sans vocal en attente, réécoute du dernier) ; **appui long** : enregistrer (relâcher = envoi à l'agent sélectionné) |
+| Menu | **clic** : élément suivant ; **appui long** : quitter | **clic** : agir sur l'élément (valeur suivante, bascule, ouvrir) |
+| Portail Wi-Fi lancé depuis le menu | clic : annuler | clic : annuler (sinon timeout 240 s) |
+| Confirmation de reset | **clic** : annuler (15 s d'inactivité = annulation) | **maintenir 3 s** : réinitialise (barre + compte à rebours ; relâcher = remise à zéro) |
+| Lecture d'un vocal | un appui coupe la lecture | idem |
+| Enregistrement | - | relâcher termine l'enregistrement |
 | Démarrage (reset) | **maintenu 3 s** : portail Wi-Fi (jamais sur réveil timer) | - |
 
+Le vocal (appui long frontal) vise l'agent **sélectionné** ; s'il n'a pas `can_send_voice` : « Envoi non autorisé vers cet agent ».
 Inactivité 30 s dans le menu : fermeture.
 
-Réglages (NVS `vol`, `bri`, `pause`, appliqués et sauvegardés immédiatement ; le volume joue un bip d'aperçu) :
+### Menu des paramètres (7 lignes, 5 visibles, défilement + ascenseur)
+
+Valeurs appliquées et sauvegardées immédiatement (NVS) :
 
 | Réglage | Valeurs | Défaut |
 |---|---|---|
-| Volume | Muet, 25 %, 50 %, 63 %, 75 %, 90 %, 100 % (0-255) | 230 (90 %) |
-| Lumière | 8 %, 16 %, 27 %, 43 %, 63 %, 82 %, 100 % | 110 (43 %) |
-| Pause (délai d'inactivité avant veille) | 10 s, 30 s, 1 min, 5 min, Jamais | 30 s |
+| Vol. notifs (sons de nudge ; aperçu = son marimba) | Muet, 25 %, 50 %, 63 %, 75 %, 90 %, 100 % | 90 % (`voln`) |
+| Vol. vocaux (voix : vocaux et TTS ; aperçu = bip) | idem | 90 % (`volv`) |
+| Lumière | 8 %, 16 %, 27 %, 43 %, 63 %, 82 %, 100 % | 43 % (`bri`) |
+| Pause (inactivité avant veille) | 10 s, 30 s, 1 min, 5 min, Jamais | 30 s (`pause`) |
+| Lecture auto des vocaux | Oui / Non | Oui (`auto`) |
+| Mode AP (Wi-Fi) | ouvre le portail WiFiManager | - |
+| Réinitialiser | écran de confirmation (maintien frontal 3 s) | - |
 
-« Jamais » : la veille profonde est désactivée, la carte reste éveillée (écran allumé, Wi-Fi connecté en économie
-modem) et se synchronise toutes les `next_sync_s` secondes. Sinon : après le délai sans appui, rétroéclairage éteint
-et veille profonde (réveil timer `next_sync_s`, défaut 60, borné 10-3600, backoff en échec, ou bouton). Pendant la
-fenêtre d'éveil, la carte se resynchronise aussi à chaque `next_sync_s`.
+Il n'y a plus de sélection des agents visibles. Un ancien réglage `vol` est repris comme valeur initiale des deux volumes.
+« Jamais » : la veille profonde est désactivée, la carte reste éveillée (écran allumé, Wi-Fi en économie modem) et se
+synchronise toutes les `next_sync_s` secondes. Sinon : après le délai sans appui, rétroéclairage éteint et veille profonde
+(réveil timer `next_sync_s`, défaut 60, borné 10-3600, backoff en échec, ou bouton).
 
-**Config Wi-Fi (AP)** : coupe la connexion et ouvre le portail WiFiManager (AP `SAN-Viewer-XXXX`) sans redémarrer ;
-enregistré, annulé (clic) ou timeout (240 s), la carte reprend aussitôt son fonctionnement normal et se resynchronise.
-Annuler ou le timeout ne modifie rien. Au démarrage, le portail (premier démarrage ou bouton du dessus 3 s) n'est
-annulable que si une configuration existe déjà.
+**Mode AP** : coupe la connexion et ouvre le portail WiFiManager (AP `SAN-Viewer-XXXX`) sans redémarrer ; enregistré, annulé
+(clic) ou timeout (240 s), la carte reprend aussitôt son fonctionnement normal et se resynchronise.
 
-**Réinitialiser** : choisir la ligne puis **maintenir le bouton du dessus 3 s** (barre + compte à rebours ; relâcher
-remet à zéro, bouton frontal = annuler). Efface la NVS (Wi-Fi, URL serveur, jeton, réglages) et l'état RTC (file de
-notifications, hashes, caches), journalise `[san] REINITIALISATION` sur le port série, puis redémarre en mode
-portail (premier démarrage). Le serveur n'est pas modifié : la carte réapparaît comme nouvelle, l'ancien
-enregistrement reste à révoquer par l'administrateur.
+**Réinitialiser** : efface la NVS (Wi-Fi, URL serveur, jeton, réglages) et l'état RTC, journalise `[san] REINITIALISATION`
+sur le port série, puis redémarre en mode portail (premier démarrage). Le serveur n'est pas modifié : l'ancien enregistrement
+reste à révoquer par l'administrateur.
 
-**Agents affichés** : la carte n'a plus de filtre local. Tous les agents de la configuration reçue du serveur
-(`config.agents`, dans l'ordre de la config, ceux qui ont un état) sont affichés et pris en compte : rangée d'icônes, résumé
-(agents en activité), bascule d'agent, notifications. Les champs `subscribed`, `muted` et `new` reçus sont ignorés
-et la carte n'envoie plus rien à `/viewer/config` (plus de `PUT`, plus de gestion du 409 ; le `config_hash` du
-`GET /viewer/sync` reste utilisé pour recevoir la config). Le filtrage se règle côté serveur/admin : une carte en mode
-`manual` ne reçoit que les agents cochés côté admin (la carte ne contourne pas cela) ; en mode `auto`, le serveur
-renvoie tous les agents visibles. Pour tout afficher, passer la carte en mode `auto` dans l'admin.
+### Sons (docs/SONS.md)
+
+Cinq sons « marimba » synthétisés en 16 kHz par blocs de 1024 échantillons (`san_sound.*`, joués par `playRaw`, gains de
+normalisation précalculés, pic 0,35). Règles anti-bruit : un seul son à la fois, 2 s minimum entre deux sons, les nudges
+proches ne jouent que le type le plus prioritaire (error > question > done > notification > start), `start` muet. Le réglage
+« Sons » du §7 n'est pas implémenté : il est remplacé par les deux volumes.
+
+**Agents affichés** : pas de filtre local. Tous les agents de la configuration reçue du serveur (`config.agents`, dans
+l'ordre de la config, ceux qui ont un état) sont affichés. Les champs `subscribed`, `muted` et `new` sont ignorés ; la carte
+n'envoie rien à `/viewer/config`.
 
 ## Configuration initiale
 
@@ -152,13 +126,13 @@ renvoie tous les agents visibles. Pour tout afficher, passer la carte en mode `a
    tant que la carte n'est pas activée).
    Un administrateur l'active dans l'interface web ; la carte passe alors en fonctionnement normal.
 
-Stockage : NVS (jeton, URLs, Wi-Fi, SSID domestique, réglages volume/lumière/pause) ; RTC memory (dernier événement acquitté, file de notifications, hashes de
-config/capacités, configuration et états en cache, canal/BSSID Wi-Fi, dernier clip).
+Stockage : NVS (jeton, URLs, Wi-Fi, SSID domestique, réglages volumes/lumière/pause/lecture auto) ; RTC memory (dernier événement acquitté, hashes de
+config/capacités, configuration et états en cache avec pastilles et clips vus, agent sélectionné, canal/BSSID Wi-Fi, dernier clip).
 
 ## Architecture
 
 - `lib/san_core/` : logique pure sans HAL (machine à états, URLs, JSON, ack, décision d'écran, troncature,
-  file de notifications, réglages, menu, actions des boutons, batterie, SHA-256, WAV/ADPCM). Testée en natif.
+  état des agents et auto-sélection, sons marimba et règles anti-bruit, réglages, menu, actions des boutons, batterie, SHA-256, WAV/ADPCM). Testée en natif.
 - `src/` : HAL (`hw_state` NVS/RTC, `net` Wi-Fi + `esp_http_client` TLS avec bundle de CA, `audio_io`, `ui`,
   `portal`) et orchestration (`main.cpp`).
 - `fixtures/` : réponses JSON conformes à SPEC §10.4 (dont `server_sync.json`, capturée sur le vrai serveur) et `fixtures/audio/*.wav`, produits par la commande ffmpeg exacte du serveur (`tools/gen-fixtures.sh`, ffmpeg requis pour les régénérer) ; utilisés par les tests natifs.
@@ -170,6 +144,7 @@ config/capacités, configuration et états en cache, canal/BSSID Wi-Fi, dernier 
 - La config arrive dans `GET /viewer/sync` : `{config_hash, config:{mode,agents[]}}` (seuls `agent`, `name`,
   `position`, `can_send_voice` sont lus). La carte n'appelle plus `/viewer/config`.
 - `POST /viewer/voice?to=<agent>` : `Content-Type: audio/wav`, réponse 2xx.
+- `states[]` porte `voice_pending` et `voice_pending_clips` ; `POST /viewer/voice/:clip/played` (sans corps, idempotent) marque lu. Les événements SSE ne sont pas utilisés (synchronisation par `GET /viewer/sync`).
 - Un clip `404`/`410` est considéré comme purgé (ignoré et acquitté).
 
 ## Limites connues / TODO
@@ -181,6 +156,6 @@ config/capacités, configuration et états en cache, canal/BSSID Wi-Fi, dernier 
 - L'état de charge (éclair) dépend de `M5.Power.isCharging()` : fiabilité à valider sur StickS3 (sinon pas d'éclair).
 - Pas d'IP statique configurable (le canal/BSSID sont mémorisés).
 - Le Wi-Fi est établi avant l'interaction (pas pendant l'enregistrement) ; l'affichage initial vient du cache RTC.
-- Réécoute : instantanée tant que la carte reste éveillée (clip gardé en PSRAM), sinon re-téléchargement.
+- Lecture : le clip est téléchargé à la demande (le dernier est gardé en PSRAM pendant l'éveil).
 - `max_detail_chars` reste déclaré dans les capacités (le détail n'est plus affiché) : le retirer changerait le hash.
 - Code non testé sur carte physique (voir `docs/HARDWARE.md`).

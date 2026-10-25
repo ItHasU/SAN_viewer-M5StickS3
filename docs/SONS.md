@@ -1,6 +1,6 @@
 # Spec : sons des nudges (timbre marimba)
 
-Statut : proposition, à valider. Timbre retenu après écoute des candidats (cloche, marimba, goutte). Référence d'écoute : `gen_sons.py`, jeu `marimba/`.
+Statut : implémenté (hors §7, non fait : remplacé par deux volumes, voir HARDWARE.md). Timbre retenu après écoute des candidats (cloche, marimba, goutte). Référence d'écoute : `gen_sons.py`, jeu `marimba/`.
 
 ## 1. Objectif
 

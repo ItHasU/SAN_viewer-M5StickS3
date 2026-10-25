@@ -138,3 +138,47 @@ Un léger sifflement est audible carte éveillée (écran allumé) ; il dispara�
 Ce n'est donc pas la commutation PWM du rétroéclairage. Pistes non explorées : bruit d'alimentation de l'écran ou du
 PMIC (M5PM1), activité du Wi-Fi/CPU couplée à l'ampli. Décision de l'utilisateur : on laisse tomber, le réglage de
 luminosité reste inchangé.
+
+## Refonte de l'interface (spec « M5 Stick - Fonctionnement »), non testée sur carte
+
+Remplace la file de notifications, les lignes de notification, le résumé cloche/engrenage et les entrées Wi-Fi/Serveur
+éphémères (voir README « Écran » et « Boutons »). Tout est à valider sur la carte.
+
+Décisions sur les points ambigus ou ouverts :
+
+- **Icône** : `idle` et `done` = coche verte ; `waiting` = point d'interrogation ; `error` = point d'exclamation ; `working` =
+  engrenage animé ; périmé/inconnu = tiret gris. Seul `states[]` fixe l'icône (le serveur met l'état à jour avec le nudge) ;
+  le type du nudge ne sert qu'au son. Un nudge `notification` ne change pas l'état.
+- **Changement de statut** : un changement entre deux icônes différentes (idle -> done n'en est pas un). Le premier état
+  jamais vu d'un agent (cache vide) ne déclenche ni sélection ni écran.
+- **Auto-sélection** : vocal > question > problème > prêt ; à rang égal le dernier agent de la liste ; « réflexion » ne
+  change rien ; rien pendant un enregistrement (le drapeau existe, la synchronisation étant de toute façon bloquée pendant
+  l'enregistrement).
+- **Vocaux** : pastille = `voice_pending` ; clip à lire = premier de `voice_pending_clips` (le plus ancien). Arrivée = clip
+  dont l'empreinte 16 bits n'est pas dans la mémoire des 8 derniers clips vus par agent (RTC) ; ainsi un vocal lu ailleurs
+  ou plus ancien ne rejoue ni ne resélectionne. Les événements `voice` sont acquittés sans traitement. Le marquage lu
+  (`POST .../played`) se fait après chaque lecture (auto ou manuelle), pas pour une simple réécoute. Échec réseau : la
+  pastille reviendra à la synchronisation suivante, sans relecture automatique. Après un reset RTC (pastille connue mais
+  liste de clips absente), l'appui frontal déclenche une synchronisation.
+- **Lecture automatique** : désactivée de fait si le volume vocaux est à zéro. Les vocaux arrivés sont lus pendant la
+  synchronisation (bloquant), dans l'ordre d'arrivée.
+- **Priorité haute** (`priority: high`) : sans effet (plus de son répété ni de fond vif).
+- **Appui sur le frontal sans vocal en attente** : réécoute du dernier vocal de l'agent s'il existe, sinon « Aucun vocal ».
+- **Menu** : plus d'entrée « Sortir » (appui long dessus). Appui long frontal dans le menu : ignoré. Clics détectés au
+  relâchement (`wasClicked`, plus de double clic : latence réduite). Confirmation de reset : maintien du frontal, annulation
+  au dessus (la logique « agir = frontal » s'applique aussi là).
+- **Barre de statut** : l'icône volume est barrée seulement si les deux volumes sont à zéro.
+- **Sons** (SONS.md) : §7 non fait (réglage « Sons » remplacé par les deux volumes). §8 : (1) gain propre à `error` =
+  constante `kErrorBoost` = 1,0 (à régler à l'oreille) ; (2) `done`/`notification` jouent aussi écran allumé ; (3) sans objet ;
+  (4) rendu sur le petit haut-parleur à écouter, coefficient du claquement (0,35) dans `noteSample`. Synthèse en float32
+  (1024 échantillons, 3 tampons, 2 en file dans `playRaw`) : un appel réseau bloquant pendant un son peut créer un trou.
+  Le son de perte de connexion prolongée (2e échec consécutif, ou écran allumé) est conservé, via les mêmes règles anti-bruit.
+- **Deux volumes** : notifications (sons marimba, aperçu = `notification`) et vocaux (aperçu = bip 1 kHz). NVS `voln` /
+  `volv`, repris de l'ancien `vol`.
+- **Micro** : démarré à l'appui frontal (si l'agent peut recevoir un vocal), annulé si l'appui est bref ; l'enregistrement
+  ne commence que 500 ms après le démarrage (`kMicSettleMs`, déjà écoulées avec le seuil d'appui long) ; gain numérique
+  +12 dB (x4) si le pic reste sous 32000, sinon le plus grand gain sans saturation (jamais en dessous de x1). À valider :
+  disparition du transitoire saturé, absence de clic à l'ouverture du micro à chaque appui frontal.
+- **RTC** : magic 0x53414E06 (format changé : plus de file de notifications, ajout des vocaux vus, du nombre de vocaux et
+  de l'agent sélectionné).
+- Les événements SSE ne sont pas utilisés par le firmware (synchronisation périodique uniquement).
