@@ -33,7 +33,9 @@ struct MainView {
   std::vector<NotifLine> notifs;  // les plus recentes d'abord (max cfg::kNotifLines affichees)
   int pending = 0;                // total en attente
   san::Activity activity;
-  san::Scene scene;               // sans notification : un pictogramme par agent suivi (aucun nom)
+  san::Scene scene;               // un pictogramme par agent suivi ; l'agent selectionne est repere
+  bool hasSel = false;
+  std::string selName;            // nom de l'agent selectionne (affiche en bas quand il n'y a pas de notification)
   bool wifiOk = false, serverOk = false, speakerOn = true, autoSleep = true;
   int battery = -1;
   san::Charge charge = san::Charge::Unknown;

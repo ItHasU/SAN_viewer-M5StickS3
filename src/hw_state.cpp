@@ -59,7 +59,7 @@ void tokenSave(Settings &s, const String &token) {
 void tokenClear(Settings &s) { tokenSave(s, ""); }
 
 // ---- RTC ----
-static const uint32_t kMagic = 0x53414E04;
+static const uint32_t kMagic = 0x53414E05;
 RTC_DATA_ATTR RtcState rtc;
 
 void rtcReset() {

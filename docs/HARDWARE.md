@@ -107,7 +107,7 @@ USB disparaît pendant le deep sleep), serveur SAN en Docker (compose standalone
 | 2 | Register, code d'appairage, activation dans l'admin, passage en RUN | OK (carte `active`, sync toutes les 60 s) |
 | 3 | `capabilities_required`, PUT caps, hash identique côté serveur | OK (hash enregistré côté serveur, identique à celui du simulateur) |
 | 4 | Règle `*` + `can_send_voice`, état/nudge/say depuis `bin/san` : écran, son, clip ADPCM 16 kHz | OK : texte lisible, voix intelligible ; volume jugé trop bas à 160, relevé à 230 ; **nudge `question` déclenché par un vrai hook Claude Code : son et icône OK** |
-| 5 | Enregistrement (appui long frontal) vers l'agent du dernier vocal reçu, sinon le premier agent autorisé | Non testé |
+| 5 | Enregistrement (appui long frontal) vers l'agent | Non testé |
 | 6 | Menu abonnements (double clic frontal puis Agents), 409 | Supprimé : plus de filtre sur la carte, tous les agents sont affichés |
 | 7 | Deep sleep : réveil timer et bouton, consommation | Réveil timer OK (cycle 60 s) ; réveil bouton, consommation : non testés |
 | 8 | Révocation dans l'admin, 401, effacement du jeton | Non testé |
@@ -115,7 +115,7 @@ USB disparaît pendant le deep sleep), serveur SAN en Docker (compose standalone
 
 Évolution suivante (voir README, « Boutons ») : vue principale à icônes (notifications en haut, activité et statut en bas), file de notifications, menu de réglages (volume, lumière, pause), batterie avec éclair de charge.
 
-Ajouts non testés sur carte (à valider) : vue sans notification refaite (« Pas de message » en haut, scène animée réduite à y 26..75 dessous, plus de sélection d'agent ni de bascule au bouton du dessus), scène animée sans notification (un pictogramme par agent, `working` = engrenage
+Ajouts non testés sur carte (à valider) : vue sans notification (« Pas de message », icônes par agent avec sélection soulignée, nom de l'agent sélectionné en bas ; avec notifications la scène animée remplace le nom, sélection au bouton du dessus conservée en RTC, magic RTC 0x53414E05), scène animée sans notification (un pictogramme par agent, `working` = engrenage
 cyan, autres atténués, « +N » au-delà de 6), menu à 6 lignes (Volume, Lumière, Pause, Config Wi-Fi, Réinitialiser, Sortir ; 5 visibles) avec défilement, **Config Wi-Fi (AP)** (portail WiFiManager
 non bloquant lancé depuis le menu, annulable au clic, timeout 240 s, sans redémarrage) et **Réinitialiser** (maintien 3 s
 du bouton du dessus, annulable au bouton frontal : efface NVS + RTC puis redémarre en portail ; journal série

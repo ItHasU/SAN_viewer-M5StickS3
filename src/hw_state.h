@@ -65,6 +65,7 @@ struct RtcState {
   RtcAgent agents[cfg::kMaxAgents];
   uint8_t nNotifs;
   RtcNotif notifs[san::NotifQueue::kCapacity];
+  char selAgent[32];    // slug de l'agent selectionne (cible du vocal), conserve entre deux sommeils
 };
 
 extern RtcState rtc;

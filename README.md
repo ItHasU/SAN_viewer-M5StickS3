@@ -23,29 +23,49 @@ pio device monitor
 
 `setRotation(1)` : USB-C en bas, bouton latéral (**dessus**) en haut, bouton **frontal** sur la face avant.
 
+Sans notification (y 0..75 = zone principale, séparateur y 76) :
+
 ```
-+--------------------------------------+
-| [icone] Agent        x2   <- notifications en attente,
-| [icone] Agent             <- 3 lignes max, la plus recente en haut
-| [icone] Agent                 (icone du type : start / notification / question / done / error / vocal)
-|--------------------------------------|   (sans notification : le haut n'affiche que « Pas de message » ;
-|                                          la scene animee, un pictogramme par agent, occupe la zone y 26..75)
-| cloche N | engrenage w/f |        <- nb de notifications | agents en activite / affiches (aucun nom d'agent)
-| wifi  serveur  haut-parleur  veille  [batterie] 87% (eclair si charge)
++--------------------------------------+ y 0
+|          Pas de message              |   texte gris, centré (y 0..24)
+|   (cog)  (lune)  (coche)  (!)  (x)   |   une icône d'état par agent (y 26..55), 6 max, « +N » au-delà
+|          ‾‾‾‾‾‾                      |   barre blanche sous l'agent SÉLECTIONNÉ (si plusieurs agents)
+|          Nom de l'agent              |   NOM de l'agent sélectionné, police 24, centré, tronqué avec « ... »
+|--------------------------------------| y 76
+| cloche N | engrenage w/f |           |   nb de notifications | agents en activité / affichés
+| wifi  serveur  haut-parleur  veille  [batterie] 87% (éclair si charge)
++--------------------------------------+ y 135
+```
+
+Avec notifications (y compris entrées système « Wi-Fi » / « Serveur »), exemple à 1 notification :
+
+```
++--------------------------------------+ y 0
+| [icone] Agent                    x2  |   notifications (3 lignes max de 25 px, la plus récente en haut ;
+|                                      |   icône du type : start / notification / question / done / error / vocal)
+|   (cog)    (lune)    (coche)         |   ANIMATION d'agents dans la place restante (y 26..75) : engrenage
+|            ‾‾‾‾‾‾                    |   cyan animé, agents à l'arrêt atténués, respiration, « +N »
+|--------------------------------------| y 76   (le nom de l'agent n'est pas affiché)
+| cloche N | engrenage w/f |  wifi ... |   comme ci-dessus
 +--------------------------------------+
 ```
 
 - Plus aucun détail texte d'agent en bas : icônes et grandes polices. Les notifications du haut gardent icône +
   nom court de l'agent. `priority: high` = ligne sur fond vif.
-- **Sans notification** : la zone du haut affiche seulement « Pas de message » (gris, centré, première ligne) ;
-  la scène animée est dessinée dessous (50 px de haut, au-dessus des compteurs et du statut, sans chevauchement).
-  Dès qu'une notification existe (y compris « Wi-Fi » / « Serveur »), les lignes de notification reprennent le haut
-  et la scène n'est plus dessinée.
-- **Scène (file de notifications vide)** : 1 pictogramme par agent affiché, sans nom (`buildScene`, `san_ui.*`) :
+- **Sans notification** : haut = « Pas de message » ; rangée d'icônes par agent (30 px) avec l'agent sélectionné
+  souligné ; bas (zone qui accueille l'animation quand il y a des notifications) = **nom de l'agent sélectionné**
+  en police 24 (tronqué par `agentLabel` à 18 caractères puis ajusté à la largeur). Pas de barre de progression
+  par agent (pas de place). Dessin de la rangée et du nom : `drawScene` / `drawSelName`, `src/ui.cpp`.
+- **Avec notifications** : les lignes de notification occupent le haut ; la scène animée est dessinée **à la place
+  du nom**, dans la hauteur restante sous les lignes : 1 notification = 50 px (scène complète), 2 = 25 px (icônes
+  réduites), 3 = aucune place (pas de scène ; l'engrenage du compteur reste animé). Pas de rangée d'icônes séparée :
+  la scène animée joue ce rôle, avec le même soulignement de l'agent sélectionné quand il tient.
+- **Scène / rangée d'icônes** : 1 pictogramme par agent affiché, sans nom (`buildScene`, `san_ui.*`) :
   `working` = engrenage cyan qui tourne (léger rebond, phases décalées) ; à l'arrêt = pictogramme statique atténué
   (lune grise `idle`/périmé, coche verte `done`, point d'exclamation orange `waiting`, croix rouge `error`).
   Personne ne travaille : scène calme, respiration lente (±2 px, ~6 s). 6 agents max ; au-delà : 5 pictogrammes +
-  « +N ». Plus de sélection d'agent. Dessin dans le canevas PSRAM (sans scintillement), animé seulement pendant la
+  « +N » (la fenêtre glisse pour garder l'agent sélectionné visible). L'agent sélectionné (bouton du dessus : agent
+  suivant) est souligné ; il est conservé entre deux sommeils (RTC, par slug, `rtc.selAgent`). Dessin dans le canevas PSRAM (sans scintillement), animé seulement pendant la
   fenêtre d'éveil (80 ms si activité, 120 ms au repos).
 - Activité : l'engrenage tourne et une petite barre glisse si au moins un agent est `working` ; `w/f` = agents en
   activité / agents affichés (tous ceux de la config).
@@ -70,9 +90,7 @@ pio device monitor
 
 ## Boutons
 
-**Cible de l'enregistrement vocal** (`pickVoiceTarget`) : l'agent du dernier vocal reçu s'il est dans la config et
-autorisé (`can_send_voice`) ; sinon le premier agent autorisé dans l'ordre d'affichage (donc l'unique agent s'il n'y en
-a qu'un). Aucun agent autorisé : message « Aucun agent autorisé », pas d'enregistrement.
+Le vocal (appui long frontal) et la réécoute visent l'agent **sélectionné** ; s'il n'a pas `can_send_voice` : message « Envoi non autorisé vers cet agent ».
 
 Hypothèses (à valider sur la carte, constantes `SAN_BTN_TOP` / `SAN_BTN_FRONT` dans `src/config.h`, seuil d'appui long
 `cfg::kHoldMs` = 500 ms) : bouton du **dessus** = BtnB (G12, latéral), bouton **frontal** = BtnA (G11). Le bouton
@@ -81,7 +99,7 @@ reset/power du PMIC n'est pas utilisable. Les deux boutons réveillent la carte 
 | Contexte | Dessus (BtnB) | Frontal (BtnA) |
 |---|---|---|
 | Sommeil | clic : réveil, affiche la vue principale | idem |
-| Vue principale | **clic** : acquitte la notification du haut (la plus récente) ; sans notification : rien (réveille seulement l'écran s'il est éteint). Plus de changement d'agent | **clic** : répète le dernier vocal ; **appui long** : enregistre (relâcher = envoi, cible ci-dessous) ; **double clic** : ouvre le menu |
+| Vue principale | **clic** : acquitte la notification du haut (la plus récente) ; sans notification : agent suivant (rotation). **Appui long** : agent suivant (même avec des notifications) | **clic** : répète le dernier vocal ; **appui long** : enregistre (relâcher = envoi à l'agent sélectionné) ; **double clic** : ouvre le menu |
 | Menu (racine : Volume, Lumière, Pause, Config Wi-Fi (AP), Réinitialiser, Sortir ; 5 lignes visibles sur 6, défilement + ascenseur) | **clic** : modifie la ligne courante (valeur suivante ; Config Wi-Fi = ouvrir le portail ; Réinitialiser = écran de confirmation ; Sortir = quitter) | **clic** : ligne suivante ; **appui long** : quitter |
 | Portail Wi-Fi lancé depuis le menu | **clic** : annuler | **clic** : annuler (sinon timeout 240 s) |
 | Confirmation de reset | **maintenir 3 s** : réinitialise (barre + compte à rebours ; relâcher = remise à zéro) | **clic** : annuler (15 s d'inactivité = annulation) |
@@ -116,7 +134,7 @@ enregistrement reste à révoquer par l'administrateur.
 
 **Agents affichés** : la carte n'a plus de filtre local. Tous les agents de la configuration reçue du serveur
 (`config.agents`, dans l'ordre de la config, ceux qui ont un état) sont affichés et pris en compte : scène, compteurs
-« en activité / suivis », notifications. Les champs `subscribed`, `muted` et `new` reçus sont ignorés
+« en activité / suivis », bascule d'agent, notifications. Les champs `subscribed`, `muted` et `new` reçus sont ignorés
 et la carte n'envoie plus rien à `/viewer/config` (plus de `PUT`, plus de gestion du 409 ; le `config_hash` du
 `GET /viewer/sync` reste utilisé pour recevoir la config). Le filtrage se règle côté serveur/admin : une carte en mode
 `manual` ne reçoit que les agents cochés côté admin (la carte ne contourne pas cela) ; en mode `auto`, le serveur

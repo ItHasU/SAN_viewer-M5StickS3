@@ -58,30 +58,31 @@ Activity summarizeActivity(const std::vector<AgentState> &states) {
   return a;
 }
 
-std::string pickVoiceTarget(const Config &cfg, const std::vector<AgentState> &states, const std::string &lastAgent) {
-  if (!lastAgent.empty()) {
-    const AgentCfg *a = cfg.find(lastAgent);
-    if (a && a->canSendVoice) return a->agent;
-  }
-  for (auto &s : states) {
-    const AgentCfg *a = cfg.find(s.agent);
-    if (a && a->canSendVoice) return a->agent;
-  }
-  return "";
+size_t clampAgentIndex(size_t cur, size_t count) { return cur < count ? cur : 0; }
+size_t nextAgentIndex(size_t cur, size_t count) {
+  if (count == 0) return 0;
+  return (clampAgentIndex(cur, count) + 1) % count;
 }
 
-Scene buildScene(const std::vector<AgentState> &states, size_t maxShown) {
+std::string agentLabel(const Config &cfg, const AgentState &s, int maxChars) {
+  const AgentCfg *a = cfg.find(s.agent);
+  return truncateChars(a && !a->name.empty() ? a->name : s.agent, maxChars);
+}
+
+Scene buildScene(const std::vector<AgentState> &states, size_t sel, size_t maxShown) {
   Scene sc;
   if (maxShown < 2) maxShown = 2;
   size_t n = states.size(), first = 0, count = n;
   if (n > maxShown) {
     count = maxShown - 1;
+    sel = clampAgentIndex(sel, n);
+    if (sel >= count) first = sel - count + 1;
     sc.more = (int)(n - count);
   }
   for (size_t i = first; i < first + count && i < n; i++) {
     IconStyle st = statusIcon(states[i].status, states[i].stale);
     bool working = st.icon == Icon::Working;
-    sc.agents.push_back({st.icon, st.color, working});
+    sc.agents.push_back({st.icon, st.color, working, i == sel});
     if (working) sc.calm = false;
   }
   // "+N" masque aussi des agents qui travaillent : ils comptent pour l'animation
@@ -123,7 +124,9 @@ std::string formatBattery(int level) {
 
 MainAction mainAction(Button b, Press p, bool hasNotifications) {
   if (b == Button::Top) {
-    return p == Press::Click && hasNotifications ? MainAction::AckLatest : MainAction::None;
+    if (p == Press::Click) return hasNotifications ? MainAction::AckLatest : MainAction::NextAgent;
+    if (p == Press::Hold) return MainAction::NextAgent;
+    return MainAction::None;
   }
   switch (p) {
     case Press::Click: return MainAction::Replay;

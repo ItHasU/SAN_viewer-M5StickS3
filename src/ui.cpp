@@ -270,22 +270,24 @@ static bool gHaveLast = false;
 // Attenue une couleur RGB565 de moitie (agents a l'arret).
 static uint16_t fade(uint16_t c) { return (uint16_t)((c >> 1) & 0x7BEF); }
 
-// Scene sans notification : un pictogramme par agent suivi, sans aucun nom, dans la partie basse de la zone
-// principale (y 26..75, sous la ligne "Pas de message" qui occupe 0..24 ; 50 px de haut).
+// Rangee / scene d'agents : un pictogramme par agent suivi dans la bande y Y0..Y0+H-1 (sans nom).
 // working : engrenage cyan qui tourne ; a l'arret : pictogramme statique attenue ; calme : respiration lente.
-static void drawScene(lgfx::LovyanGFX &d, const san::Scene &sc, uint32_t frame) {
-  const int W = d.width(), Y0 = 26, H = 50;
+// L'agent selectionne est souligne (si plusieurs agents et si la place le permet).
+static void drawScene(lgfx::LovyanGFX &d, const san::Scene &sc, uint32_t frame, int Y0, int H) {
+  const int W = d.width();
   int br = sc.calm ? san::sceneBreath(frame) : 0;
   size_t n = sc.agents.size();
+  int rmax = (H - 8) / 2;  // marge pour le rebond (+-2 px) et le soulignement
   if (n == 0) {  // aucun agent suivi : lune calme
-    iconMoon(W / 2, Y0 + H / 2 + br, 20, TFT_DARKGREY, TFT_BLACK);
+    iconMoon(W / 2, Y0 + H / 2 + br, rmax < 20 ? rmax : 20, TFT_DARKGREY, TFT_BLACK);
     return;
   }
   size_t slots = n + (sc.more > 0 ? 1 : 0);
   int r = slots <= 2 ? 20 : slots <= 3 ? 19 : slots <= 4 ? 17 : 14;
+  if (r > rmax) r = rmax;
   int slotW = W / (int)slots > 2 * r + 12 ? 2 * r + 12 : W / (int)slots;
   int x0 = (W - slotW * (int)slots) / 2 + slotW / 2;
-  int cy = Y0 + H / 2;
+  int cy = Y0 + (H - 5) / 2;
   for (size_t i = 0; i < n; i++) {
     const auto &a = sc.agents[i];
     int cx = x0 + (int)i * slotW;
@@ -293,6 +295,10 @@ static void drawScene(lgfx::LovyanGFX &d, const san::Scene &sc, uint32_t frame) 
     if (a.animated) iconGear(d, cx, y, r, a.color, TFT_BLACK, frame * 0.12f + i * 0.9f);
     else if (a.icon == san::Icon::Idle || a.icon == san::Icon::Stale) iconStatus(a.icon, cx, y, r, a.color, TFT_BLACK);  // deja gris
     else iconStatus(a.icon, cx, y, r, fade(a.color), TFT_BLACK);
+    if (a.selected && slots > 1 && cy + r + 6 <= Y0 + H) {  // soulignement de l'agent selectionne
+      int uw = r * 2 * 8 / 10;
+      d.fillRoundRect(cx - uw / 2, cy + r + 3, uw, 3, 1, TFT_WHITE);
+    }
   }
   if (sc.more > 0) {
     textStyle(kFont24, TFT_LIGHTGREY, TFT_BLACK);
@@ -300,6 +306,16 @@ static void drawScene(lgfx::LovyanGFX &d, const san::Scene &sc, uint32_t frame) 
     d.drawString(("+" + std::to_string(sc.more)).c_str(), x0 + (int)n * slotW, cy + br);
     d.setTextDatum(top_left);
   }
+}
+
+// Nom de l'agent selectionne, centre, grande police ; raccourci pour tenir dans la largeur.
+static void drawSelName(lgfx::LovyanGFX &d, const std::string &name, int cy) {
+  textStyle(kFont24, TFT_WHITE, TFT_BLACK);
+  std::string t = name;
+  while (t.size() > 4 && d.textWidth(t.c_str()) > d.width() - 8) t = san::truncateChars(t, (int)san::utf8Length(t) - 1);
+  d.setTextDatum(middle_center);
+  d.drawString(t.c_str(), d.width() / 2, cy);
+  d.setTextDatum(top_left);
 }
 
 static void drawMain(const MainView &v, uint32_t frame) {
@@ -336,13 +352,20 @@ static void drawMain(const MainView &v, uint32_t frame) {
         d.setTextDatum(top_left);
       }
     }
-  } else {
-    // aucune notification : le haut n'affiche que ce texte, discret ; la scene occupe la zone du dessous
+  }
+  if (!shown) {
+    // aucune notification : « Pas de message » en haut, rangee d'icones par agent (selection soulignee), puis le
+    // NOM de l'agent selectionne en grand dans la partie basse (la ou joue l'animation avec des notifications)
     textStyle(kFont24, TFT_DARKGREY, TFT_BLACK);
     d.setTextDatum(middle_center);
     d.drawString("Pas de message", W / 2, lineH / 2);
     d.setTextDatum(top_left);
-    drawScene(d, v.scene, frame);
+    drawScene(d, v.scene, frame, 26, 30);
+    if (v.hasSel) drawSelName(d, v.selName, 65);
+  } else {
+    // notifications en haut ; sous elles, la scene animee dans la place restante (>= 26 px : 1 ou 2 lignes)
+    int y0 = (int)shown * lineH + 1;
+    if (76 - y0 >= 24) drawScene(d, v.scene, frame, y0, 76 - y0);
   }
   d.drawFastHLine(0, 76, W, 0x39E7);
   // ---- zone d'activite (ligne A)

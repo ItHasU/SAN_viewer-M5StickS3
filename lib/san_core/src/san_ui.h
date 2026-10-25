@@ -35,10 +35,13 @@ struct Activity {
 };
 // `states` = etats deja filtres/ordonnes (orderStates).
 Activity summarizeActivity(const std::vector<AgentState> &states);
-// Cible de l'enregistrement vocal (plus de selection d'agent) : l'agent du dernier vocal recu s'il est connu de la
-// config et autorise (can_send_voice) ; sinon le premier agent autorise dans l'ordre de `states` (c'est l'unique
-// agent quand il n'y en a qu'un). Renvoie le slug, ou "" si aucun agent n'est autorise.
-std::string pickVoiceTarget(const Config &cfg, const std::vector<AgentState> &states, const std::string &lastAgent);
+// Agent suivant dans la liste (cyclique) ; index invalide ramene a 0 ; 0 si liste vide.
+size_t nextAgentIndex(size_t cur, size_t count);
+size_t clampAgentIndex(size_t cur, size_t count);
+
+// Nom de l'agent affiche en grand (bas de l'ecran sans notification) : nom de la config (sinon le slug), tronque a
+// `maxChars` caracteres avec "..." (sans couper un caractere UTF-8).
+std::string agentLabel(const Config &cfg, const AgentState &s, int maxChars);
 
 // ---- Scene principale (aucune notification) : un pictogramme par agent suivi ----
 constexpr size_t kSceneMax = 6;  // emplacements au maximum (le dernier devient "+N" au-dela)
@@ -46,6 +49,7 @@ struct SceneAgent {
   Icon icon;       // pictogramme d'etat (statusIcon)
   uint16_t color;  // couleur pleine RGB565 ; l'affichage l'attenue si !animated
   bool animated;   // working : anime ; sinon statique et attenue
+  bool selected;   // agent cible (souligne discretement, sans nom)
 };
 struct Scene {
   std::vector<SceneAgent> agents;  // emplacements affiches, dans l'ordre
@@ -53,8 +57,8 @@ struct Scene {
   bool calm = true;                // personne ne travaille : respiration lente
 };
 // `states` = etats suivis ordonnes (orderStates). Plus de maxShown agents : maxShown-1 emplacements + "+N" ;
-// les premiers agents sont affiches, le reste est resume par "+N".
-Scene buildScene(const std::vector<AgentState> &states, size_t maxShown = kSceneMax);
+// la fenetre glisse pour que l'agent selectionne reste visible.
+Scene buildScene(const std::vector<AgentState> &states, size_t sel, size_t maxShown = kSceneMax);
 // Decalage vertical (-2..2 px) de la respiration lente, periode 48 images.
 int sceneBreath(uint32_t frame);
 
@@ -70,10 +74,10 @@ BatteryStyle batteryStyle(int level, Charge charge);
 std::string formatBattery(int level);  // "87%" ou "--"
 
 // ---- Actions des boutons (vue principale) ----
-// Haut = BtnB (acquitter), Frontal = BtnA (repeter / enregistrer / menu).
+// Haut = BtnB (acquitter / agent suivant), Frontal = BtnA (repeter / enregistrer / menu).
 enum class Button { Top, Front };
 enum class Press { Click, DoubleClick, Hold };
-enum class MainAction { None, AckLatest, Replay, Record, OpenMenu };
+enum class MainAction { None, AckLatest, NextAgent, Replay, Record, OpenMenu };
 MainAction mainAction(Button b, Press p, bool hasNotifications);
 
 // ---- Machine a etats du menu ----

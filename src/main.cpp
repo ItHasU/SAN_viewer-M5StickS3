@@ -30,6 +30,7 @@ static struct Runtime {
   bool viewStale = true;
   NotifQueue notifs;               // notifications en attente (persistees en RTC)
   std::string base;
+  size_t sel = 0;                  // agent selectionne (cible de l'enregistrement)
   int battery = -1;                // niveau affiche et remonte au serveur (battery_pct)
   Charge charge = Charge::Unknown;
   uint32_t batteryAt = 0;
@@ -49,7 +50,13 @@ static void screenOn() {
   touch();
 }
 static const std::vector<AgentState> &view() {
-  if (G.viewStale) { G.view = orderStates(G.cfg, G.states); G.viewStale = false; }
+  if (G.viewStale) {
+    G.view = orderStates(G.cfg, G.states);
+    G.viewStale = false;
+    for (size_t i = 0; i < G.view.size(); i++)  // la selection est memorisee par slug (RTC) : survit au sommeil et aux reordonnancements
+      if (G.view[i].agent == rtc.selAgent) { G.sel = i; break; }
+  }
+  G.sel = clampAgentIndex(G.sel, G.view.size());
   return G.view;
 }
 static void invalidateView() { G.viewStale = true; G.dirty = true; }
@@ -87,7 +94,9 @@ static ui::MainView buildView() {
   v.pending = G.notifs.total();
   const auto &vw = view();
   v.activity = summarizeActivity(vw);
-  v.scene = buildScene(vw);
+  v.scene = buildScene(vw, G.sel);
+  v.hasSel = !vw.empty();
+  if (v.hasSel) v.selName = agentLabel(G.cfg, vw[G.sel], 18);
   v.wifiOk = WiFi.status() == WL_CONNECTED;
   v.serverOk = G.serverOk;
   v.speakerOn = S.volume > 0;
@@ -372,11 +381,9 @@ static void recTick(int ms) {
   if (ms - last >= 100) { ui::recording(gRecAgent, ms, gRecMaxMs); last = ms; }
 }
 
-// Cible : agent du dernier vocal recu, sinon premier agent autorise (voir pickVoiceTarget).
-static void doRecord() {
-  std::string target = pickVoiceTarget(G.cfg, view(), rtc.lastClipAgent);
-  const AgentCfg *a = G.cfg.find(target);
-  if (!a) { ui::message("Vocal", "Aucun agent autorise", TFT_RED); waitOrButton(1500); return; }
+static void doRecord(const AgentState &s) {
+  const AgentCfg *a = G.cfg.find(s.agent);
+  if (!a || !a->canSendVoice) { ui::message("Vocal", "Envoi non autorise vers cet agent", TFT_RED); waitOrButton(1500); return; }
   gRecAgent = a->name;
   ui::recording(gRecAgent, 0, gRecMaxMs);
   net::wifiBegin(S);  // le Wi-Fi s'associe pendant l'enregistrement (SPEC 12.3) ; wifiConnect reprend sans relancer
@@ -386,7 +393,7 @@ static void doRecord() {
   if (!ensureOnline()) { heap_caps_free(buf); G.dirty = true; return; }  // la notification Wi-Fi dit pourquoi
   ui::message("Envoi...", gRecAgent, TFT_CYAN);
   net::Resp r(4096);
-  call(r, HTTP_METHOD_POST, voiceUploadUrl(G.base, a->agent), buf, len, "audio/wav");
+  call(r, HTTP_METHOD_POST, voiceUploadUrl(G.base, s.agent), buf, len, "audio/wav");
   heap_caps_free(buf);
   handleAuth(r.code);
   if (r.code <= 0) { sysResult(Sys::Server, false); G.dirty = true; return; }  // transport : notification Serveur
@@ -545,8 +552,18 @@ static void awakeLoop() {
         audio_io::soundStop();  // un appui coupe le son d'alerte en cours
         switch (mainAction(b, p, !G.notifs.empty())) {
           case MainAction::AckLatest: G.notifs.ackLatest(); persistNotifs(); break;
+          case MainAction::NextAgent: {
+            const auto &v = view();
+            G.sel = nextAgentIndex(G.sel, v.size());
+            if (!v.empty()) strlcpy(rtc.selAgent, v[G.sel].agent.c_str(), sizeof rtc.selAgent);
+            break;
+          }
           case MainAction::Replay: doReplay(); break;
-          case MainAction::Record: doRecord(); break;
+          case MainAction::Record: {
+            const auto &v = view();
+            if (!v.empty()) doRecord(v[G.sel]);
+            break;
+          }
           case MainAction::OpenMenu:
             menu = MenuCtx();
             mode = Mode::Menu;
